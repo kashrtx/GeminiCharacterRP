@@ -1,5 +1,20 @@
 // Constants
-const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent";
+const AI_PROVIDERS = {
+    GEMINI: "gemini",
+    OLLAMA: "ollama",
+    LM_STUDIO: "lmstudio",
+};
+
+const LEGACY_GEMINI_MODEL_MAP = {
+    "gemini-3-flash-preview": "gemini-3.5-flash",
+    "gemini-3-pro-preview": "gemini-3.1-pro-preview",
+};
+
+const DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite";
+const DEFAULT_OLLAMA_URL = "http://localhost:11434";
+const DEFAULT_LM_STUDIO_URL = "http://localhost:1234/v1";
+const NO_THINKING_INSTRUCTION = "Disable thinking or reasoning mode when the model supports it. Do not output chain-of-thought, hidden reasoning, or <think> blocks. Reply directly and completely in character.";
+
 const STORAGE_KEYS = {
     API_KEY: "gemini_api_key",
     CHARACTERS: "gemini_characters",
@@ -13,16 +28,16 @@ const VERSION = "1.1.3"; // Fixed character response isolation when switching ch
 
 // App Settings
 let appSettings = {
-    allowGroupChats: false,
-    modelVersion: "gemini-2.5-flash-lite", // default - best responses per user testing
-    temperature: 1.0, //  0.5 for a balance between randomness and coherence.
-    enhancedContextTokens: 2000, // Controls token length for character context enhancement
-    conversationTokens: 2048, // Controls token length for AI responses in chat
-    maxTokens: 2048, // For backward compatibility
-    topK: 1, //Top-K changes how the model selects tokens for output. 
-    // A top-K of 1 means the next selected token is the most probable 
-    // among all tokens in the model's vocabulary (also called greedy decoding)
-    topP: 0.90,
+    provider: AI_PROVIDERS.GEMINI,
+    modelVersion: DEFAULT_GEMINI_MODEL,
+    ollamaBaseUrl: DEFAULT_OLLAMA_URL,
+    ollamaModel: "gemma3:12b",
+    lmStudioBaseUrl: DEFAULT_LM_STUDIO_URL,
+    lmStudioModel: "local-model",
+    temperature: 1.0, // 0.5 for a balance between randomness and coherence.
+    enhancedContextTokens: 4096, // Controls token length for character context enhancement
+    conversationTokens: 4096, // Controls token length for AI responses in chat
+    maxTokens: 4096, // For backward compatibility
 };
 
 // App State
@@ -35,6 +50,7 @@ let state = {
     activeChat: null,
     selectedCharacters: [], // For character selection in sidebar
     genaiClient: null, // Store the GoogleGenAI client reference
+    activeProvider: null,
     isApiConnected: false, // Track API connection status
     personalContext: {
         name: "",
@@ -73,38 +89,349 @@ function loadGeminiSDK() {
     });
 }
 
-// Initialize Gemini API (new @google/genai SDK)
-async function initializeGeminiAPI() {
-    if (!state.apiKey) {
-        console.log("No API key available");
+// AI provider setup and request helpers
+function getCurrentProvider() {
+    return Object.values(AI_PROVIDERS).includes(appSettings.provider)
+        ? appSettings.provider
+        : AI_PROVIDERS.GEMINI;
+}
+
+function getProviderDisplayName(provider = getCurrentProvider()) {
+    switch (provider) {
+        case AI_PROVIDERS.OLLAMA:
+            return "Ollama";
+        case AI_PROVIDERS.LM_STUDIO:
+            return "LM Studio";
+        default:
+            return "Google Gemini";
+    }
+}
+
+function normalizeBaseUrl(url, fallback) {
+    const normalized = (url || fallback || "").trim().replace(/\/+$/, "");
+    return normalized || fallback;
+}
+
+function getGeminiModelName() {
+    const requestedModel = appSettings.modelVersion || DEFAULT_GEMINI_MODEL;
+    return LEGACY_GEMINI_MODEL_MAP[requestedModel] || requestedModel;
+}
+
+function getTokenLimit(value, fallback = 4096) {
+    const parsed = parseInt(value, 10);
+    if (!Number.isFinite(parsed) || parsed < 1) return fallback;
+    return Math.min(parsed, 65536);
+}
+
+function getGeminiThinkingConfig(modelName = getGeminiModelName()) {
+    const model = modelName.toLowerCase();
+
+    if (model.includes("gemini-2.5-flash")) {
+        return { thinkingBudget: 0 };
+    }
+
+    if (model.includes("gemini-3.1-pro")) {
+        return { thinkingLevel: "low" };
+    }
+
+    if (model.includes("gemini-3")) {
+        return { thinkingLevel: "minimal" };
+    }
+
+    return null;
+}
+
+function buildGeminiGenerationConfig(maxOutputTokens) {
+    const config = {
+        temperature: appSettings.temperature,
+        maxOutputTokens: getTokenLimit(maxOutputTokens || appSettings.conversationTokens || appSettings.maxTokens),
+    };
+
+    const thinkingConfig = getGeminiThinkingConfig();
+    if (thinkingConfig) {
+        config.thinkingConfig = thinkingConfig;
+    }
+
+    return config;
+}
+
+function getOllamaBaseUrl() {
+    return normalizeBaseUrl(appSettings.ollamaBaseUrl, DEFAULT_OLLAMA_URL);
+}
+
+function getLMStudioBaseUrl() {
+    const baseUrl = normalizeBaseUrl(appSettings.lmStudioBaseUrl, DEFAULT_LM_STUDIO_URL);
+    return baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`;
+}
+
+function isProviderConfigured(provider = getCurrentProvider()) {
+    if (provider === AI_PROVIDERS.GEMINI) {
+        return Boolean(state.apiKey);
+    }
+
+    if (provider === AI_PROVIDERS.OLLAMA) {
+        return Boolean(getOllamaBaseUrl() && (appSettings.ollamaModel || "").trim());
+    }
+
+    if (provider === AI_PROVIDERS.LM_STUDIO) {
+        return Boolean(getLMStudioBaseUrl() && (appSettings.lmStudioModel || "").trim());
+    }
+
+    return false;
+}
+
+function getProviderConfigurationMessage(provider = getCurrentProvider()) {
+    if (provider === AI_PROVIDERS.GEMINI) {
+        return "Please set your Gemini API key in Settings first.";
+    }
+
+    if (provider === AI_PROVIDERS.OLLAMA) {
+        return "Please set an Ollama endpoint and model in Settings first.";
+    }
+
+    return "Please set an LM Studio endpoint and model in Settings first.";
+}
+
+function extractResponseText(result) {
+    if (!result) return "";
+    if (typeof result.text === "string") return result.text;
+    if (typeof result.text === "function") return result.text();
+    return result?.candidates?.[0]?.content?.parts?.map(part => part.text || "").join("") || "";
+}
+
+async function parseErrorResponse(response) {
+    try {
+        const text = await response.text();
+        return text ? `: ${text.substring(0, 500)}` : "";
+    } catch (error) {
+        return "";
+    }
+}
+
+function getLocalProviderBridgeHint() {
+    const bridgeActive = Boolean(window.__GCRP_LOCAL_AI_BRIDGE__?.active);
+    if (bridgeActive) return "";
+
+    const isSecurePage = window.location.protocol === "https:";
+    const host = window.location.hostname;
+    const isLocalPage = host === "localhost" || host === "127.0.0.1" || host === "";
+
+    if (isSecurePage) {
+        return " If this app is running on Netlify or your phone, install local-ai-bridge.user.js in Tampermonkey and use your PC LAN IP endpoint instead of localhost.";
+    }
+
+    if (!isLocalPage) {
+        return " If you are using a phone, keep the PC and phone on the same Wi-Fi and use your PC LAN IP endpoint instead of localhost.";
+    }
+
+    return "";
+}
+
+async function fetchLocalProvider(url, options = {}, providerName = getProviderDisplayName()) {
+    try {
+        return await fetch(url, options);
+    } catch (error) {
+        throw new Error(`${providerName} could not be reached at ${url}.${getLocalProviderBridgeHint()} Original error: ${error.message}`);
+    }
+}
+
+async function initializeAIProvider({ showErrors = true } = {}) {
+    const provider = getCurrentProvider();
+
+    if (!isProviderConfigured(provider)) {
+        state.isApiConnected = false;
+        state.activeProvider = null;
+        if (showErrors) showError(getProviderConfigurationMessage(provider));
         return false;
     }
 
     try {
-        // Import the new GoogleGenAI SDK
-        const { GoogleGenAI } = await import("https://esm.run/@google/genai");
+        if (provider === AI_PROVIDERS.GEMINI) {
+            const { GoogleGenAI } = await import("https://esm.run/@google/genai");
+            state.genaiClient = new GoogleGenAI({ apiKey: state.apiKey });
 
-        // Create the GoogleGenAI client instance
-        state.genaiClient = new GoogleGenAI({ apiKey: state.apiKey });
+            const result = await state.genaiClient.models.generateContent({
+                model: getGeminiModelName(),
+                contents: "Reply with OK.",
+                config: buildGeminiGenerationConfig(48),
+            });
+            console.log("Gemini connection test successful:", extractResponseText(result).substring(0, 40));
+        } else if (provider === AI_PROVIDERS.OLLAMA) {
+            state.genaiClient = null;
+            await callOllamaChat([{ role: "user", content: "Reply with OK." }], 48);
+            console.log("Ollama connection test successful");
+        } else if (provider === AI_PROVIDERS.LM_STUDIO) {
+            state.genaiClient = null;
+            await callLMStudioChat([{ role: "user", content: "Reply with OK." }], 48);
+            console.log("LM Studio connection test successful");
+        }
 
-        // Test the API connection with the selected model
-        const modelName = appSettings.modelVersion || "gemini-2.5-flash";
-        const result = await state.genaiClient.models.generateContent({
-            model: modelName,
-            contents: "Hello, testing Gemini API connection.",
-        });
-        console.log("API connection test successful:", result.text.substring(0, 20) + "...");
-
+        state.activeProvider = provider;
         state.isApiConnected = true;
+        checkApiKey();
         return true;
     } catch (error) {
-        console.error("Failed to initialize Gemini API:", error);
-        showError(`Failed to connect to Gemini API: ${error.message}`);
+        console.error(`Failed to initialize ${getProviderDisplayName(provider)}:`, error);
         state.isApiConnected = false;
+        state.activeProvider = null;
+        if (showErrors) showError(`Failed to connect to ${getProviderDisplayName(provider)}: ${error.message}`);
+        checkApiKey();
         return false;
     }
 }
 
+// Backward-compatible name used by older call sites.
+async function initializeGeminiAPI(options) {
+    return initializeAIProvider(options);
+}
+
+async function ensureAIProviderReady() {
+    const provider = getCurrentProvider();
+    if (state.isApiConnected && state.activeProvider === provider && (provider !== AI_PROVIDERS.GEMINI || state.genaiClient)) {
+        return true;
+    }
+
+    const initialized = await initializeAIProvider();
+    if (!initialized) {
+        throw new Error(`The ${getProviderDisplayName(provider)} provider is not configured or reachable.`);
+    }
+    return true;
+}
+
+async function callGeminiText(prompt, maxOutputTokens) {
+    const result = await state.genaiClient.models.generateContent({
+        model: getGeminiModelName(),
+        contents: prompt,
+        config: buildGeminiGenerationConfig(maxOutputTokens),
+    });
+
+    return extractResponseText(result);
+}
+
+function withNoThinkingSystemMessage(messages) {
+    const hasSystemMessage = messages.some(message => message.role === "system");
+    if (hasSystemMessage) {
+        return messages.map(message => {
+            if (message.role !== "system") return message;
+            return { ...message, content: `${NO_THINKING_INSTRUCTION}\n\n${message.content}` };
+        });
+    }
+
+    return [{ role: "system", content: NO_THINKING_INSTRUCTION }, ...messages];
+}
+
+async function callOllamaChat(messages, maxOutputTokens) {
+    const model = (appSettings.ollamaModel || "").trim();
+    const response = await fetchLocalProvider(`${getOllamaBaseUrl()}/api/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            model,
+            messages: withNoThinkingSystemMessage(messages),
+            stream: false,
+            options: {
+                temperature: appSettings.temperature,
+                num_predict: getTokenLimit(maxOutputTokens || appSettings.conversationTokens || appSettings.maxTokens),
+            },
+        }),
+    });
+
+    if (!response.ok) {
+        throw new Error(`Ollama request failed (${response.status})${await parseErrorResponse(response)}`);
+    }
+
+    const data = await response.json();
+    return data?.message?.content || data?.response || "";
+}
+
+async function resolveLMStudioModel() {
+    const configuredModel = (appSettings.lmStudioModel || "").trim();
+    if (configuredModel && configuredModel !== "local-model") {
+        return configuredModel;
+    }
+
+    try {
+        const response = await fetchLocalProvider(`${getLMStudioBaseUrl()}/models`, {}, "LM Studio");
+        if (!response.ok) return configuredModel || "local-model";
+        const data = await response.json();
+        return data?.data?.[0]?.id || configuredModel || "local-model";
+    } catch (error) {
+        return configuredModel || "local-model";
+    }
+}
+
+async function callLMStudioChat(messages, maxOutputTokens) {
+    const model = await resolveLMStudioModel();
+    const response = await fetchLocalProvider(`${getLMStudioBaseUrl()}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            model,
+            messages: withNoThinkingSystemMessage(messages),
+            temperature: appSettings.temperature,
+            max_tokens: getTokenLimit(maxOutputTokens || appSettings.conversationTokens || appSettings.maxTokens),
+            stream: false,
+        }),
+    });
+
+    if (!response.ok) {
+        throw new Error(`LM Studio request failed (${response.status})${await parseErrorResponse(response)}`);
+    }
+
+    const data = await response.json();
+    return data?.choices?.[0]?.message?.content || "";
+}
+
+async function callAIText(prompt, maxOutputTokens) {
+    await ensureAIProviderReady();
+
+    const provider = getCurrentProvider();
+    if (provider === AI_PROVIDERS.GEMINI) {
+        return callGeminiText(prompt, maxOutputTokens);
+    }
+
+    const messages = [
+        { role: "user", content: prompt },
+    ];
+
+    if (provider === AI_PROVIDERS.OLLAMA) {
+        return callOllamaChat(messages, maxOutputTokens);
+    }
+
+    return callLMStudioChat(messages, maxOutputTokens);
+}
+
+async function callAIChat(messages, maxOutputTokens) {
+    await ensureAIProviderReady();
+
+    const provider = getCurrentProvider();
+    if (provider === AI_PROVIDERS.OLLAMA) {
+        return callOllamaChat(messages, maxOutputTokens);
+    }
+
+    if (provider === AI_PROVIDERS.LM_STUDIO) {
+        return callLMStudioChat(messages, maxOutputTokens);
+    }
+
+    const prompt = messages.map(message => `${message.role.toUpperCase()}: ${message.content}`).join("\n\n");
+    return callGeminiText(prompt, maxOutputTokens);
+}
+
+function convertGeminiHistoryToChatMessages(history) {
+    return history.map(entry => ({
+        role: entry.role === "model" ? "assistant" : "user",
+        content: (entry.parts || []).map(part => part.text || "").join("\n"),
+    })).filter(message => message.content.trim());
+}
+
+function buildLocalChatMessages(character, history, instructions) {
+    const systemPrompt = prepareContextForAPI(character, [], [character]);
+    return [
+        { role: "system", content: `${systemPrompt}\n\n${NO_THINKING_INSTRUCTION}` },
+        ...convertGeminiHistoryToChatMessages(history),
+        { role: "user", content: instructions },
+    ];
+}
 // Helper functions
 const generateUniqueId = () => Math.random().toString(36).substring(2, 11);
 
@@ -150,27 +477,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Show API warning if needed
     checkApiKey();
 
-    // Initialize Gemini API if key is available
-    if (state.apiKey) {
+    // Initialize the selected AI provider if it is already configured.
+    if (isProviderConfigured()) {
         try {
-            const success = await initializeGeminiAPI();
+            const success = await initializeAIProvider({ showErrors: false });
             if (success) {
-                console.log("Gemini API initialized successfully");
-                // Update UI to show connection status
-                const apiWarning = document.getElementById('api-warning');
-                if (apiWarning) {
-                    apiWarning.classList.add('hidden');
-                }
-                // Show success message
-                showSuccess("API connected successfully", 3000);
+                console.log(`${getProviderDisplayName()} initialized successfully`);
+                showSuccess(`${getProviderDisplayName()} connected successfully`, 3000);
             }
         } catch (error) {
-            console.error("Error initializing Gemini API:", error);
+            console.error("Error initializing AI provider:", error);
         }
     }
-
-    // Set up test chat form for easier testing
-    setupTestChatForm();
 
     // Initialize sidebar functionality
     initializeSidebar();
@@ -338,28 +656,6 @@ function setupDirectListeners() {
     }
 }
 
-// Set up a fallback chat form handler for testing
-function setupTestChatForm() {
-    const chatForm = document.getElementById('chat-form');
-    if (chatForm) {
-        // Remove existing listeners and add test listener
-        const clonedForm = chatForm.cloneNode(true);
-        chatForm.parentNode.replaceChild(clonedForm, chatForm);
-
-        clonedForm.addEventListener('submit', function (e) {
-            e.preventDefault();
-            console.log("Chat form submitted via test handler");
-
-            // Use API function if connected, otherwise fall back to test
-            if (state.isApiConnected && state.apiKey) {
-                sendMessage();
-            } else {
-                testSendMessage();
-            }
-        });
-    }
-}
-
 // Load data from localStorage
 function loadStoredData() {
     console.log("Loading stored data");
@@ -382,6 +678,17 @@ function loadStoredData() {
         appSettings = { ...appSettings, ...storedSettings };
     }
 
+    if (!Object.values(AI_PROVIDERS).includes(appSettings.provider)) {
+        appSettings.provider = AI_PROVIDERS.GEMINI;
+    }
+    appSettings.modelVersion = LEGACY_GEMINI_MODEL_MAP[appSettings.modelVersion] || appSettings.modelVersion || DEFAULT_GEMINI_MODEL;
+    appSettings.ollamaBaseUrl = appSettings.ollamaBaseUrl || DEFAULT_OLLAMA_URL;
+    appSettings.ollamaModel = appSettings.ollamaModel || "gemma3:12b";
+    appSettings.lmStudioBaseUrl = appSettings.lmStudioBaseUrl || DEFAULT_LM_STUDIO_URL;
+    appSettings.lmStudioModel = appSettings.lmStudioModel || "local-model";
+    delete appSettings.allowGroupChats;
+    delete appSettings.topK;
+    delete appSettings.topP;
     // Load personal context
     const storedContext = getStoredItem(STORAGE_KEYS.PERSONAL_CONTEXT, null);
     if (storedContext) {
@@ -394,11 +701,6 @@ function loadStoredData() {
         apiKeyInput.value = state.apiKey;
     }
 
-    // Set the group chat checkbox state
-    const groupChatCheckbox = document.getElementById('allow-group-chats');
-    if (groupChatCheckbox) {
-        groupChatCheckbox.checked = appSettings.allowGroupChats;
-    }
 
     // Set personal context fields
     const nameInput = document.getElementById('user-name');
@@ -699,45 +1001,40 @@ function changeView(viewName) {
 // Check if API key is set and working
 function checkApiKey() {
     const warningElement = document.getElementById('api-warning');
-    if (!state.apiKey || !state.isApiConnected) {
+    if (!warningElement) return;
+
+    if (!isProviderConfigured() || !state.isApiConnected || state.activeProvider !== getCurrentProvider()) {
         warningElement.classList.remove('hidden');
     } else {
         warningElement.classList.add('hidden');
     }
 }
-
 // Save API key
 async function saveApiKey() {
     const apiKeyInput = document.getElementById('api-key-input');
-    state.apiKey = apiKeyInput.value.trim();
-    setStoredItem(STORAGE_KEYS.API_KEY, state.apiKey);
+    if (apiKeyInput) {
+        state.apiKey = apiKeyInput.value.trim();
+        setStoredItem(STORAGE_KEYS.API_KEY, state.apiKey);
+    }
 
-    // Test API connection with new key
-    const success = await initializeGeminiAPI();
+    saveVisibleProviderSettings();
 
-    // Show result message
+    const success = await initializeAIProvider();
     const savedMessage = document.getElementById('api-saved');
     if (savedMessage) {
-        if (success) {
-            savedMessage.textContent = "API key saved and connected successfully";
-
-            // Add a short delay before refreshing to allow the user to see the success message
-            setTimeout(() => {
-                window.location.reload();
-            }, 1500);
-        } else {
-            savedMessage.textContent = "API key saved but connection failed";
-        }
+        savedMessage.textContent = success
+            ? `${getProviderDisplayName()} settings saved and connected successfully`
+            : `${getProviderDisplayName()} settings saved, but the connection failed`;
+        savedMessage.classList.toggle('text-green-600', success);
+        savedMessage.classList.toggle('text-red-600', !success);
         savedMessage.classList.remove('hidden');
         setTimeout(() => {
             savedMessage.classList.add('hidden');
         }, 3000);
     }
 
-    // Update API warning
     checkApiKey();
 }
-
 // Error handling
 function showError(message) {
     const errorContainer = document.getElementById('error-container');
@@ -884,7 +1181,7 @@ function createNewCharacter() {
             ` : ''}
 
             <div class="mt-3 flex justify-center">
-                <button id="enhance-btn-${newCharacter.id}" class="text-sm bg-secondary text-white px-3 py-1 rounded hover:bg-secondary/90 transition ${!state.apiKey ? 'disabled:bg-gray-400' : ''}" ${!state.apiKey ? 'disabled' : ''}>
+                <button id="enhance-btn-${newCharacter.id}" class="text-sm bg-secondary text-white px-3 py-1 rounded hover:bg-secondary/90 transition ${!isProviderConfigured() ? 'disabled:bg-gray-400' : ''}" ${!isProviderConfigured() ? 'disabled' : ''}>
                     <i class="fas fa-magic mr-1"></i> ${newCharacter.enhancedContext ? 'Re-Enhance Context' : 'Enhance Context'}
                 </button>
             </div>
@@ -1034,7 +1331,7 @@ function generateCharacterListHTML() {
                     <button
                         id="enhance-btn-${character.id}"
                         class="text-sm bg-secondary text-white px-3 py-1 rounded hover:bg-secondary/90 transition disabled:bg-gray-400"
-                    ${!state.apiKey ? 'disabled' : ''}
+                    ${!isProviderConfigured() ? 'disabled' : ''}
                     >
                     <i class="fas fa-magic mr-1"></i> ${character.enhancedContext ? 'Re-Enhance Context' : 'Enhance Context'}
                     </button>
@@ -1207,18 +1504,8 @@ function toggleCharacterSelection(characterId) {
     // Save the previous active chat to clean up in-progress system messages
     const previousActiveChat = state.activeChat;
 
-    // Handle selection based on group chat setting
-    if (!appSettings.allowGroupChats) {
-        // Single character mode - replace existing selection
-        state.selectedCharacters = [characterId];
-    } else {
-        // Group chat mode - toggle selection
-        if (wasSelected) {
-            state.selectedCharacters = state.selectedCharacters.filter(id => id !== characterId);
-        } else {
-            state.selectedCharacters.push(characterId);
-        }
-    }
+    // Single-character mode is enforced. Selecting a character replaces the current chat target.
+    state.selectedCharacters = [characterId];
 
     // Update UI to reflect selection state
     updateSidebarCharacters();
@@ -1271,7 +1558,7 @@ function toggleCharacterSelection(characterId) {
     }
 
     // Auto-start chat in single character mode
-    if (!appSettings.allowGroupChats && state.selectedCharacters.length === 1) {
+    if (state.selectedCharacters.length === 1) {
         console.log("Auto-starting chat since character was selected");
 
         // Ensure the character's chat reference is maintained
@@ -1287,7 +1574,7 @@ function toggleCharacterSelection(characterId) {
             state.activeChat = lastChatId;
 
             // Update active characters
-            state.activeCharacters = state.characters.filter(c => state.selectedCharacters.includes(c.id));
+            state.activeCharacters = state.characters.filter(c => state.selectedCharacters.includes(c.id)).slice(0, 1);
 
             // Ensure the chat has at least one message (add a welcome message if empty)
             if (state.chats[lastChatId].length === 0) {
@@ -1319,8 +1606,12 @@ function startChat() {
     console.log("Start chat clicked", state.selectedCharacters); // Debug log
 
     if (state.selectedCharacters.length === 0) {
-        showError("Please select at least one character to chat with");
+        showError("Please select a character to chat with");
         return;
+    }
+
+    if (state.selectedCharacters.length > 1) {
+        state.selectedCharacters = [state.selectedCharacters[0]];
     }
 
     // Clean up any existing chat's system messages before changing
@@ -1343,7 +1634,7 @@ function startChat() {
     }
 
     // Generate chat ID
-    const chatId = state.selectedCharacters.sort().join('-');
+    const chatId = [...state.selectedCharacters].sort().join('-');
     state.activeChat = chatId;
 
     // Ensure chat exists in state
@@ -1353,7 +1644,7 @@ function startChat() {
     }
 
     // Update active characters
-    state.activeCharacters = state.characters.filter(c => state.selectedCharacters.includes(c.id));
+    state.activeCharacters = state.characters.filter(c => state.selectedCharacters.includes(c.id)).slice(0, 1);
 
     // Save the active chat ID for each selected character
     state.selectedCharacters.forEach(characterId => {
@@ -1609,10 +1900,13 @@ function createMessageHTML(message) {
         messageContainer.appendChild(charNameDiv);
 
         const bubbleDiv = createElement('div', ['message-bubble', 'character-message', 'typing-indicator-bubble']);
+        const statusDiv = createElement('div', ['typing-status-text']);
+        statusDiv.textContent = message.content || `${character.name} is thinking...`;
         const typingIndicator = createElement('div', ['typing-indicator']);
+        typingIndicator.setAttribute('aria-label', statusDiv.textContent);
         typingIndicator.innerHTML = '<span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>';
+        bubbleDiv.appendChild(statusDiv);
         bubbleDiv.appendChild(typingIndicator);
-
         const deleteButton = createElement('button', ['absolute', '-top-3', '-right-3', 'bg-red-500', 'text-white', 'rounded-full', 'w-6', 'h-6', 'flex', 'items-center', 'justify-center', 'shadow', 'hover:bg-red-600', 'transition', 'hidden'], { id: `delete-msg-${message.id}`, title: "Remove stuck typing indicator" });
         deleteButton.innerHTML = '<i class="fas fa-times text-xs"></i>';
         deleteButton.onclick = () => deleteMessage(message.id);
@@ -1726,7 +2020,7 @@ function createMessageHTML(message) {
             return false;
         })();
 
-        const showRegenerateButton = isLastCharacterMessage && !isFollowedByUserMessage;
+        const showRegenerateButton = isLastCharacterMessage && !isFollowedByUserMessage && !state.isResponseInProgress;
 
         if (showRegenerateButton) {
             const regenerateButton = createElement('button', ['ml-4', 'text-primary', 'hover:text-primary/70', 'edit-msg-btn'], { title: "Regenerate response" });
@@ -1735,7 +2029,7 @@ function createMessageHTML(message) {
             timestampDiv.appendChild(regenerateButton);
         }
 
-        if (isLastCharacterMessage) {
+        if (isLastCharacterMessage && !state.isResponseInProgress) {
             const editButton = createElement('button', ['ml-4', 'text-primary', 'hover:text-primary/70', 'edit-msg-btn'], { title: "Edit message" });
             editButton.innerHTML = '<i class="fas fa-pencil-alt text-xs"></i> <span class="text-xs">Edit</span>';
             editButton.onclick = () => editMessage(message.id);
@@ -2053,7 +2347,7 @@ function saveEditedMessage(messageId, newContent) {
                         return false;
                     })();
 
-                    const showRegenerateButton = isLastCharacterMessage && !isFollowedByUserMessage;
+                    const showRegenerateButton = isLastCharacterMessage && !isFollowedByUserMessage && !state.isResponseInProgress;
 
                     // Add regenerate button if needed
                     if (showRegenerateButton) {
@@ -2418,7 +2712,8 @@ function loadChatFromHistory(chatId) {
     // Update active characters based on the chat ID
     const chatParts = chatId.split('-');
     const characterIds = chatParts.filter(part => !isNaN(parseInt(part, 36)) || part.length < 10);
-    state.activeCharacters = state.characters.filter(c => characterIds.includes(c.id));
+    state.activeCharacters = state.characters.filter(c => characterIds.includes(c.id)).slice(0, 1);
+    state.selectedCharacters = state.activeCharacters.map(c => c.id);
 
     // Update the last active chat for each character
     characterIds.forEach(characterId => {
@@ -2487,7 +2782,7 @@ function deleteChatHistory(chatId, historyKey) {
                 const activeCharacters = state.characters.filter(c => characterIds.includes(c.id));
                 if (activeCharacters.length > 0) {
                     // Set active characters and create a new chat
-                    state.activeCharacters = activeCharacters;
+                    state.activeCharacters = activeCharacters.slice(0, 1);
                     createNewChat();
                     showSuccess("Deleted chat and started a new conversation");
                 } else {
@@ -2545,9 +2840,15 @@ async function sendMessage() {
         }
     }
 
+    if (state.activeCharacters.length > 1) {
+        state.activeCharacters = [state.activeCharacters[0]];
+        state.selectedCharacters = [state.activeCharacters[0].id];
+    }
+
     // If a response is already in progress, prevent sending another message
     if (state.isResponseInProgress) {
         console.log("Response is already in progress, ignoring send request");
+        showError("Please wait for the current response to finish before sending another message.");
         return;
     }
 
@@ -2673,6 +2974,7 @@ async function sendMessage() {
     } finally {
         state.isResponseInProgress = false;
         updateSendButtonState();
+        updateChatMessages();
     }
 }
 
@@ -2716,6 +3018,67 @@ function updateSendButtonState() {
     }
 }
 
+function getResponseStatusText(character, startedAt) {
+    const elapsedSeconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+    const providerName = getProviderDisplayName();
+    const isLocalProvider = getCurrentProvider() !== AI_PROVIDERS.GEMINI;
+
+    if (elapsedSeconds < 5) {
+        return `${character.name} is thinking...`;
+    }
+
+    if (elapsedSeconds < 15) {
+        return `${providerName} is preparing the reply (${elapsedSeconds}s)...`;
+    }
+
+    if (isLocalProvider && elapsedSeconds < 45) {
+        return `Local model is still generating (${elapsedSeconds}s). First tokens can take a while.`;
+    }
+
+    return `Still generating (${elapsedSeconds}s). Please wait; sending and regenerate are paused.`;
+}
+
+function updateTypingIndicatorStatus(typingMsgId, statusText) {
+    for (const chatId in state.chats) {
+        const messages = state.chats[chatId];
+        if (!messages) continue;
+
+        const typingMessage = messages.find(m => m.id === typingMsgId);
+        if (!typingMessage) continue;
+
+        typingMessage.content = statusText;
+
+        if (chatId === state.activeChat) {
+            const messageElement = document.querySelector(`[data-message-id="${typingMsgId}"]`);
+            const statusElement = messageElement?.querySelector('.typing-status-text');
+            if (statusElement) {
+                statusElement.textContent = statusText;
+            }
+
+            const messagesContainer = document.getElementById('chat-messages');
+            if (messagesContainer) {
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            }
+        }
+
+        return;
+    }
+}
+
+function startResponseStatusUpdates(typingMsgId, character) {
+    const startedAt = Date.now();
+    updateTypingIndicatorStatus(typingMsgId, getResponseStatusText(character, startedAt));
+
+    return setInterval(() => {
+        updateTypingIndicatorStatus(typingMsgId, getResponseStatusText(character, startedAt));
+    }, 3000);
+}
+
+function clearResponseStatusUpdates(timerId) {
+    if (timerId) {
+        clearInterval(timerId);
+    }
+}
 function addMessage(message) {
     // If we have a pending response for a character that's not the active chat
     // Store it in the right chat but don't update the UI
@@ -2807,6 +3170,7 @@ async function getCharacterResponse(character, userMsg) {
         chatId: chatId,
         isGenerating: true
     };
+    let responseStatusTimer = null;
 
     try {
         // Get visible messages for context (excluding any that are marked as deleted)
@@ -2839,6 +3203,7 @@ async function getCharacterResponse(character, userMsg) {
 
         // Add the typing indicator
         addMessage(typingMsg);
+        responseStatusTimer = startResponseStatusUpdates(typingMsg.id, character);
 
         // Simulate a minimal typing delay based on character and context
         // This makes the interaction feel more natural
@@ -2958,44 +3323,46 @@ Do not acknowledge this as a command or mention that the user sent an empty mess
 Stay in character and respond naturally to the user's message.`;
         }
 
+        instructions += `\n${NO_THINKING_INSTRUCTION}`;
+
         try {
-            // Create a chat with the history using new @google/genai SDK
-            const modelName = appSettings.modelVersion || "gemini-2.5-flash";
-            console.log("Creating chat with model:", modelName, "config:", {
-                temperature: appSettings.temperature,
-                maxOutputTokens: parseInt(appSettings.conversationTokens || appSettings.maxTokens),
-                topK: appSettings.topK,
-                topP: appSettings.topP
-            });
+            await ensureAIProviderReady();
+
+            if (getCurrentProvider() !== AI_PROVIDERS.GEMINI) {
+                updateTypingIndicatorStatus(typingMsg.id, `${getProviderDisplayName()} is generating the reply...`);
+
+                const localMessages = buildLocalChatMessages(character, history, instructions);
+                const localResponse = await callAIChat(localMessages, appSettings.conversationTokens || appSettings.maxTokens);
+
+                if (state.pendingResponses[character.id] && state.pendingResponses[character.id].chatId === chatId) {
+                    removeTypingIndicator(typingMsg.id);
+                    addMessage({
+                        id: generateUniqueId(),
+                        content: localResponse || `*${character.name} did not return any text*`,
+                        isUser: false,
+                        characterId: character.id,
+                        timestamp: new Date().toISOString(),
+                        isDeleted: false,
+                    });
+                }
+
+                console.log("Local provider response complete, length:", (localResponse || "").length);
+                return;
+            }
+            // Create a chat with the history using the Gemini SDK.
+            const modelName = getGeminiModelName();
+            const generationConfig = buildGeminiGenerationConfig(appSettings.conversationTokens || appSettings.maxTokens);
+            console.log("Creating Gemini chat with model:", modelName, "config:", generationConfig);
 
             const chat = state.genaiClient.chats.create({
                 model: modelName,
                 history: history,
-                config: {
-                    temperature: appSettings.temperature,
-                    maxOutputTokens: parseInt(appSettings.conversationTokens || appSettings.maxTokens),
-                    topK: appSettings.topK,
-                    topP: appSettings.topP,
-                }
+                config: generationConfig,
             });
 
-            // Important: First remove the typing indicator before adding the empty message
-            removeTypingIndicator(typingMsg.id);
-
-            // Prepare for the new response
+            // Prepare for the new response, but do not create a blank bubble before text arrives.
             let fullResponse = "";
-            const responseMsg = {
-                id: generateUniqueId(),
-                content: "",
-                isUser: false,
-                characterId: character.id,
-                timestamp: new Date().toISOString(),
-                isDeleted: false,
-            };
-
-            // Add the initial empty message
-            addMessage(responseMsg);
-
+            let responseMsg = null;
             // Determine typing speed based on character personality
             // This makes characters with verbose personalities type slower than terse ones
             const baseCharSpeed = character.enhancedContext ?
@@ -3025,21 +3392,46 @@ Stay in character and respond naturally to the user's message.`;
                         break; // Stop processing if chat context changed or response cancelled
                     }
 
+                    if (!responseMsg) {
+                        removeTypingIndicator(typingMsg.id);
+                        responseMsg = {
+                            id: generateUniqueId(),
+                            content: "",
+                            isUser: false,
+                            characterId: character.id,
+                            timestamp: new Date().toISOString(),
+                            isDeleted: false,
+                        };
+                        addMessage(responseMsg);
+                    }
+
                     updateMessageContent(responseMsg.id, chunkText, false); // Stream update (isFinalUpdate = false)
                     accumulatedRawResponse += chunkText; // Accumulate raw text
+                    fullResponse = accumulatedRawResponse;
                 }
 
                 // Final update after loop: Process content and save final raw state
                 if (state.pendingResponses[character.id] && state.pendingResponses[character.id].chatId === chatId) {
-                    const finalMessageInState = state.chats[chatId].find(m => m.id === responseMsg.id);
-                    if (finalMessageInState) {
-                        finalMessageInState.content = accumulatedRawResponse; // Store the raw, complete text
-                        setStoredItem(STORAGE_KEYS.CHATS, state.chats); // Save state with final raw content
+                    if (responseMsg && accumulatedRawResponse) {
+                        const finalMessageInState = state.chats[chatId].find(m => m.id === responseMsg.id);
+                        if (finalMessageInState) {
+                            finalMessageInState.content = accumulatedRawResponse; // Store the raw, complete text
+                            setStoredItem(STORAGE_KEYS.CHATS, state.chats); // Save state with final raw content
+                        }
+                        // Call updateMessageContent with isFinalUpdate = true to apply processContent
+                        updateMessageContent(responseMsg.id, accumulatedRawResponse, true);
+                    } else {
+                        removeTypingIndicator(typingMsg.id);
+                        addMessage({
+                            id: generateUniqueId(),
+                            content: `*${character.name} did not return any text*`,
+                            isUser: false,
+                            characterId: character.id,
+                            timestamp: new Date().toISOString(),
+                            isDeleted: false,
+                        });
                     }
-                    // Call updateMessageContent with isFinalUpdate = true to apply processContent
-                    updateMessageContent(responseMsg.id, accumulatedRawResponse, true);
                 }
-
                 console.log("Full response complete, length:", accumulatedRawResponse.length);
             } catch (error) {
                 console.error("Stream error:", error);
@@ -3053,11 +3445,34 @@ Stay in character and respond naturally to the user's message.`;
                             const emergencyResponse = await callGeminiAPI(
                                 `As ${character.name}, please respond to: "${userMsg.content || 'Continue the conversation'}" (Keep it brief and in character)`
                             );
-                            updateMessageContent(responseMsg.id, emergencyResponse);
+                            if (!responseMsg) {
+                                removeTypingIndicator(typingMsg.id);
+                                addMessage({
+                                    id: generateUniqueId(),
+                                    content: emergencyResponse,
+                                    isUser: false,
+                                    characterId: character.id,
+                                    timestamp: new Date().toISOString(),
+                                    isDeleted: false,
+                                });
+                            } else {
+                                updateMessageContent(responseMsg.id, emergencyResponse, true);
+                            }
                         } catch (fallbackError) {
                             // If even that fails, add an apologetic message
-                            updateMessageContent(responseMsg.id, `*${character.name} seems unable to respond at the moment*`);
-                        }
+                            if (!responseMsg) {
+                                removeTypingIndicator(typingMsg.id);
+                                addMessage({
+                                    id: generateUniqueId(),
+                                    content: `*${character.name} seems unable to respond at the moment*`,
+                                    isUser: false,
+                                    characterId: character.id,
+                                    timestamp: new Date().toISOString(),
+                                    isDeleted: false,
+                                });
+                            } else {
+                                updateMessageContent(responseMsg.id, `*${character.name} seems unable to respond at the moment*`, true);
+                            }                        }
                     }
                 }
                 throw error; // Still throw the error for the outer catch block
@@ -3146,6 +3561,7 @@ Stay in character and respond naturally to the user's message.`;
                 }
             }
         } finally {
+            clearResponseStatusUpdates(responseStatusTimer);
             // Clean up the pending response status when done
             if (state.pendingResponses[character.id] &&
                 state.pendingResponses[character.id].chatId === chatId) {
@@ -3153,8 +3569,8 @@ Stay in character and respond naturally to the user's message.`;
             }
         }
     } catch (error) {
+        clearResponseStatusUpdates(responseStatusTimer);
         console.error("Error in getCharacterResponse:", error);
-
         // Make sure any pending statuses for this character/chat are cleaned up
         if (state.pendingResponses[character.id] &&
             state.pendingResponses[character.id].chatId === chatId) {
@@ -3299,6 +3715,7 @@ ${state.personalContext.context ? `\nAdditional context about them: ${state.pers
 ROLEPLAY GUIDELINES:
 - Stay in character at all times - you ARE ${character.name}
 - Never break character or mention being an AI
+- Do not output visible thinking, chain-of-thought, or <think> sections; reply directly and fully in character
 - Respond naturally based on your character's personality and the user's known traits
 - Use natural conversational language and emotional responses
 - If the user has shared their name or traits, incorporate these naturally into your responses
@@ -3350,25 +3767,7 @@ ROLEPLAY GUIDELINES:
         }
     }
 
-    // Add group chat context if needed
-    if (activeCharacters.length > 1) {
-        context += "\n\nOTHER CHARACTERS PRESENT:\n";
-        activeCharacters.forEach(char => {
-            if (char.id !== character.id) {
-                context += `- ${char.name}: ${char.enhancedContext
-                    ? summarizeContext(char.enhancedContext, 150)
-                    : char.userContext}\n`;
-            }
-        });
-    }
-
     return context;
-}
-
-// Helper function to summarize long context for group chats
-function summarizeContext(context, maxLength = 100) {
-    if (context.length <= maxLength) return context;
-    return context.substring(0, maxLength) + "...";
 }
 
 // Convert history to the format expected by Gemini API
@@ -3527,17 +3926,17 @@ function forceOpenChat() {
 
     const headerSubtitle = document.getElementById('chat-header-subtitle');
     if (headerSubtitle) {
-        const apiStatus = state.isApiConnected ? "API connected" : "API not connected (test mode)";
-        headerSubtitle.textContent = `Test conversation - ${apiStatus}`;
+        const apiStatus = state.isApiConnected ? `${getProviderDisplayName()} connected` : `${getProviderDisplayName()} not connected`;
+        headerSubtitle.textContent = `Conversation - ${apiStatus}`;
     }
 
     // Add a welcome message based on API status
     let welcomeMessage = "";
 
     if (state.isApiConnected) {
-        welcomeMessage = "Welcome to the chat! The Gemini API is connected and ready. Your messages will receive AI-generated responses based on the character profile.";
+        welcomeMessage = `Welcome to the chat! ${getProviderDisplayName()} is connected and ready.`;
     } else {
-        welcomeMessage = "Welcome to the test chat! The Gemini API is not currently connected. Messages will receive simulated responses. To use the real API, please add your API key in Settings.";
+        welcomeMessage = `Welcome to the chat! Configure and test ${getProviderDisplayName()} in Settings to receive AI-generated responses.`;
     }
 
     // Reset existing messages
@@ -3556,18 +3955,18 @@ function forceOpenChat() {
     addMessage(welcomeMsg);
 
     // Try to connect API if key exists but connection failed
-    if (state.apiKey && !state.isApiConnected) {
-        initializeGeminiAPI().then(success => {
+    if (isProviderConfigured() && !state.isApiConnected) {
+        initializeAIProvider().then(success => {
             if (success) {
                 // Update header with new status
                 if (headerSubtitle) {
-                    headerSubtitle.textContent = "Test conversation - API connected";
+                    headerSubtitle.textContent = `Conversation - ${getProviderDisplayName()} connected`;
                 }
 
                 // Add a success message
                 addMessage({
                     id: generateUniqueId(),
-                    content: "API connection successful! Your messages will now receive AI-generated responses.",
+                    content: `${getProviderDisplayName()} connection successful! Your messages will now receive AI-generated responses.`,
                     isUser: false,
                     characterId: state.characters[0].id,
                     timestamp: new Date().toISOString(),
@@ -3580,232 +3979,21 @@ function forceOpenChat() {
     }
 }
 
-// Override the normal setup to prioritize test chat
-document.addEventListener('DOMContentLoaded', function () {
-    // Normal initialization
-    loadStoredData();
-    setupEventListeners();
-    checkApiKey();
-    changeView('chat');
-    updateCharacterLists();
-
-    // Load Gemini SDK
-    loadGeminiSDK().catch(error => {
-        console.error("Failed to load Gemini SDK:", error);
-        // Don't show error for SDK load failure to allow testing without API
-    });
-
-    // Set up chat form with test mode
-    const chatForm = document.getElementById('chat-form');
-    if (chatForm) {
-        // Remove existing listeners
-        const clonedForm = chatForm.cloneNode(true);
-        chatForm.parentNode.replaceChild(clonedForm, chatForm);
-
-        // Add our test listener
-        clonedForm.addEventListener('submit', function (e) {
-            e.preventDefault();
-            console.log("Chat form submitted");
-
-            // Use test function for simplicity
-            testSendMessage();
-        });
-    }
-});
-
-// Function to test if a character can be enhanced or generate responses
-async function testModelCapabilities() {
-    if (!state.apiKey) {
-        showError("Please set your Gemini API key in settings first");
-        return false;
-    }
-
-    try {
-        await initializeGeminiAPI();
-        return state.isApiConnected;
-    } catch (error) {
-        showError(`API test failed: ${error.message}`);
-        return false;
-    }
-}
-
-// Function for testing the chat without API
-function testSendMessage() {
-    const messageInput = document.getElementById('message-input');
-    const userMessage = messageInput.value.trim();
-
-    // Clear input regardless of content
-    messageInput.value = '';
-
-    // Check if we have an empty message
-    if (!userMessage) {
-        // For empty messages, we'll just trigger the AI to continue
-        state.activeCharacters.forEach(character => {
-            // Create a special "continue" message that won't be displayed
-            const continueMsg = {
-                id: generateUniqueId(),
-                content: "",
-                isUser: true,
-                timestamp: new Date().toISOString(),
-                isDeleted: true, // Mark as deleted so it won't show in the UI
-                isContinue: true // Special flag to mark this as a continue message
-            };
-
-            // Add a delay to simulate thinking
-            setTimeout(() => {
-                // Generate a test response that demonstrates self-roleplay
-                const characterMessages = state.chats[state.activeChat].filter(
-                    m => !m.isUser && m.characterId === character.id && !m.isDeleted
-                );
-                const lastCharacterMessage = characterMessages.length > 0 ?
-                    characterMessages[characterMessages.length - 1].content : "";
-
-                // Generate a test response that builds on the last message for continuity
-                const testContinueResponse = `*continues the ongoing action based on previous messages*\n\n${character.name} is showing self-roleplaying behavior and continuing autonomously.`;
-
-                getTestCharacterResponse(character, testContinueResponse);
-            }, 1000);
-        });
-        return;
-    }
-
-    // Add user message
-    const userMsg = {
-        id: generateUniqueId(),
-        content: userMessage,
-        isUser: true,
-        timestamp: new Date().toISOString(),
-        isDeleted: false,
-    };
-
-    addMessage(userMsg);
-
-    // Get fake response from each character
-    state.activeCharacters.forEach(character => {
-        getTestCharacterResponse(character);
-    });
-}
-
-// Generate a test response without using the API
-async function getTestCharacterResponse(character, customResponse = null) {
-    // Add typing indicator
-    const typingMsg = {
-        id: generateUniqueId(),
-        content: "typing...",
-        isUser: false,
-        characterId: character.id,
-        timestamp: new Date().toISOString(),
-        isTyping: true,
-        isDeleted: false,
-    };
-
-    addMessage(typingMsg);
-
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 1500));
-
-    // Remove typing indicator
-    const messages = state.chats[state.activeChat];
-    const typingIndex = messages.findIndex(m => m.id === typingMsg.id);
-
-    if (typingIndex !== -1) {
-        messages.splice(typingIndex, 1);
-    }
-
-    // Get last user message for context
-    const userMessages = messages.filter(m => m.isUser && !m.isDeleted);
-    const lastUserMessage = userMessages[userMessages.length - 1]?.content || "Hello";
-
-    // Check if this is a continue message
-    const isContinue = userMessages.length > 0 &&
-        userMessages[userMessages.length - 1]?.isContinue === true;
-
-    // If a custom response was provided, use that instead of generating one
-    if (customResponse) {
-        // Add the response as a message
-        addMessage({
-            id: generateUniqueId(),
-            content: customResponse,
-            isUser: false,
-            characterId: character.id,
-            timestamp: new Date().toISOString(),
-            isDeleted: false,
-        });
-        return;
-    }
-
-    // Generate fake response based on character when API is not connected
-    let fakeResponse;
-
-    if (isContinue) {
-        // For continue messages, generate a response that continues the story
-        const continueFakeResponses = [
-            `*continues the story* As ${character.name}, I think we should explore this further...`,
-            `Let me elaborate on that. I believe that...`,
-            `*nods thoughtfully* I understand. Let me add to what I was saying earlier...`,
-            `Actually, there's something else I wanted to mention about this topic...`,
-            `*pauses for a moment* On second thought, I should clarify what I meant earlier...`
-        ];
-        fakeResponse = continueFakeResponses[Math.floor(Math.random() * continueFakeResponses.length)];
-    } else {
-        // Regular responses for normal user messages
-        const fakeResponses = [
-            `As ${character.name}, I find your message "${lastUserMessage}" quite interesting. But the API is not connected. Add your Gemini API key in settings for real responses!`,
-            `Hmm, let me think about "${lastUserMessage}" for a moment...lol the API is not connected. Add your Gemini API key in settings for real responses!`,
-            `That's an excellent point about "${lastUserMessage}". I would add that...but the API is not connected. Add your Gemini API key in settings for real responses!`,
-            `I disagree with your assessment of "${lastUserMessage}", because... but the API is not connected. Add your Gemini API key in settings for real responses!`,
-            `You said "${lastUserMessage}?" I've never thought about it that way before. And btw the API is not connected! Add your Gemini API key in settings for real responses!`
-        ];
-        fakeResponse = fakeResponses[Math.floor(Math.random() * fakeResponses.length)];
-    }
-
-    // Add actual response
-    addMessage({
-        id: generateUniqueId(),
-        content: fakeResponse,
-        isUser: false,
-        characterId: character.id,
-        timestamp: new Date().toISOString(),
-        isDeleted: false,
-    });
-}
-
-// API communication with the Gemini SDK (new @google/genai)
+// API communication
 async function callGeminiAPI(prompt) {
     try {
-        if (!state.apiKey || !state.genaiClient) {
-            const initialized = await initializeGeminiAPI();
-            if (!initialized) {
-                throw new Error("API key not set or Gemini client not initialized.");
-            }
-        }
-
-        const modelName = appSettings.modelVersion || "gemini-2.5-flash";
-        const result = await state.genaiClient.models.generateContent({
-            model: modelName,
-            contents: prompt,
-            config: {
-                temperature: appSettings.temperature,
-                maxOutputTokens: appSettings.enhancedContextTokens || appSettings.maxTokens,
-                topK: appSettings.topK,
-                topP: appSettings.topP,
-            },
-        });
-
-        return result.text;
+        return await callAIText(prompt, appSettings.enhancedContextTokens || appSettings.maxTokens);
     } catch (error) {
-        console.error("Gemini API call failed:", error);
-        if (error.message.includes("API key")) {
-            state.isApiConnected = false;
-            checkApiKey();
-        }
+        console.error(`${getProviderDisplayName()} API call failed:`, error);
+        state.isApiConnected = false;
+        checkApiKey();
         throw error;
     }
 }
 
 async function enhanceCharacterContext(characterId) {
-    if (!state.apiKey) {
-        showError("Please set your Gemini API key in settings first");
+    if (!isProviderConfigured()) {
+        showError(getProviderConfigurationMessage());
         return;
     }
 
@@ -3830,7 +4018,7 @@ async function enhanceCharacterContext(characterId) {
         try {
             const initialized = await initializeGeminiAPI();
             if (!initialized) {
-                showError("Failed to connect to Gemini API. Please check your API key.");
+                showError(`Failed to connect to ${getProviderDisplayName()}. Please check your provider settings.`);
                 resetEnhanceButton(enhanceButton);
                 return;
             }
@@ -4129,7 +4317,7 @@ function createCharacterItemHTML(character) {
                 <button
                     id="enhance-btn-${character.id}"
                     class="text-sm bg-secondary text-white px-3 py-1 rounded hover:bg-secondary/90 transition disabled:bg-gray-400"
-                ${!state.apiKey ? 'disabled' : ''}
+                ${!isProviderConfigured() ? 'disabled' : ''}
                 >
                 <i class="fas fa-magic mr-1"></i> ${character.enhancedContext ? 'Re-Enhance Context' : 'Enhance Context'}
                 </button>
@@ -4247,150 +4435,188 @@ function renderFilteredAndSortedCharacters() {
 }
 
 // Save app settings to local storage
-function saveAppSettings() {
+function saveAppSettings(options = {}) {
+    const { reinitialize = false } = options;
+    delete appSettings.allowGroupChats;
+    delete appSettings.topK;
+    delete appSettings.topP;
     setStoredItem(STORAGE_KEYS.SETTINGS, appSettings);
 
-    // If we have an API key and the model is initialized, reinitialize with new settings
-    if (state.apiKey && state.isApiConnected) {
-        console.log("Settings changed, reinitializing model with new configuration");
-        // Reinitialize the model with new settings
-        initializeGeminiAPI().then(success => {
+    if (reinitialize && isProviderConfigured()) {
+        console.log("Settings changed, reinitializing provider with new configuration");
+        initializeAIProvider().then(success => {
             if (success) {
-                console.log("Model successfully reinitialized with new settings");
-                // Show a small notification if success
-                showSuccess("Model settings updated", 2000);
+                showSuccess("Provider settings updated", 2000);
             } else {
-                console.error("Failed to reinitialize model with new settings");
-                showError("Failed to update model with new settings. Please check your configuration.");
+                showError("Failed to update provider settings. Please check your configuration.");
             }
         }).catch(error => {
-            console.error("Error reinitializing model:", error);
-            showError(`Error updating model: ${error.message}`);
+            console.error("Error reinitializing provider:", error);
+            showError(`Error updating provider: ${error.message}`);
         });
     }
 }
+function updateLocalBridgeStatus() {
+    const status = document.getElementById('local-bridge-status');
+    if (!status) return;
 
-// Toggle group chats setting
-function toggleGroupChats(allowed) {
-    appSettings.allowGroupChats = allowed;
-    saveAppSettings();
+    const bridge = window.__GCRP_LOCAL_AI_BRIDGE__;
+    status.className = 'mt-3 text-xs';
 
-    // If disabling group chats, limit selection to one character
-    if (!allowed && state.selectedCharacters.length > 1) {
-        // Keep only the first selected character
-        state.selectedCharacters = [state.selectedCharacters[0]];
-        // Update the sidebar to reflect the change
-        updateSidebarCharacters();
+    if (bridge?.active) {
+        status.classList.add('text-green-600');
+        status.textContent = `Bridge status: active in this browser (v${bridge.version || 'unknown'}).`;
+        return;
     }
 
-    console.log("Group chats setting updated:", allowed ? "Enabled" : "Disabled");
+    if (window.location.protocol === 'https:') {
+        status.classList.add('text-amber-600');
+        status.textContent = 'Bridge status: not detected. Install the userscript before using local models from Netlify or a phone browser.';
+        return;
+    }
+
+    status.classList.add('text-gray-500');
+    status.textContent = 'Bridge status: not detected. This is fine for same-PC localhost use; phones still need a LAN IP endpoint and the bridge.';
+}
+
+function updateProviderSettingsVisibility() {
+    const provider = getCurrentProvider();
+    document.querySelectorAll('[data-provider-settings]').forEach(panel => {
+        panel.classList.toggle('hidden', panel.getAttribute('data-provider-settings') !== provider);
+    });
+
+    const providerHelp = document.getElementById('provider-help-text');
+    if (providerHelp) {
+        if (provider === AI_PROVIDERS.GEMINI) {
+            providerHelp.textContent = "Uses Google Gemini through your browser. Thinking is minimized automatically where the API supports it; Gemini 3.1 Pro uses the lowest supported level.";
+        } else if (provider === AI_PROVIDERS.OLLAMA) {
+            providerHelp.textContent = `Uses your local Ollama server. Keep Ollama running and enter an installed model name.${getLocalProviderBridgeHint()}`;
+        } else {
+            providerHelp.textContent = `Uses LM Studio's local OpenAI-compatible server. Load a model in LM Studio before testing.${getLocalProviderBridgeHint()}`;
+        }
+    }
+
+    updateLocalBridgeStatus();
+}
+
+function markProviderConnectionDirty() {
+    state.isApiConnected = false;
+    state.activeProvider = null;
+    checkApiKey();
+}
+
+function saveVisibleProviderSettings() {
+    const providerSelect = document.getElementById('provider-select');
+    const modelSelect = document.getElementById('model-select');
+    const apiKeyInput = document.getElementById('api-key-input');
+    const ollamaBaseUrl = document.getElementById('ollama-base-url');
+    const ollamaModelInput = document.getElementById('ollama-model-input');
+    const lmStudioBaseUrl = document.getElementById('lmstudio-base-url');
+    const lmStudioModelInput = document.getElementById('lmstudio-model-input');
+
+    if (providerSelect) appSettings.provider = providerSelect.value;
+    if (modelSelect) appSettings.modelVersion = modelSelect.value;
+    if (apiKeyInput) state.apiKey = apiKeyInput.value.trim();
+    if (ollamaBaseUrl) appSettings.ollamaBaseUrl = ollamaBaseUrl.value.trim() || DEFAULT_OLLAMA_URL;
+    if (ollamaModelInput) appSettings.ollamaModel = ollamaModelInput.value.trim();
+    if (lmStudioBaseUrl) appSettings.lmStudioBaseUrl = lmStudioBaseUrl.value.trim() || DEFAULT_LM_STUDIO_URL;
+    if (lmStudioModelInput) appSettings.lmStudioModel = lmStudioModelInput.value.trim();
+
+    delete appSettings.allowGroupChats;
+    delete appSettings.topK;
+    delete appSettings.topP;
+
+    setStoredItem(STORAGE_KEYS.API_KEY, state.apiKey);
+    saveAppSettings({ reinitialize: false });
 }
 
 // Initialize event listeners for model settings
 function initializeModelSettings() {
+    const providerSelect = document.getElementById('provider-select');
     const modelSelect = document.getElementById('model-select');
+    const apiKeyInput = document.getElementById('api-key-input');
+    const ollamaBaseUrl = document.getElementById('ollama-base-url');
+    const ollamaModelInput = document.getElementById('ollama-model-input');
+    const lmStudioBaseUrl = document.getElementById('lmstudio-base-url');
+    const lmStudioModelInput = document.getElementById('lmstudio-model-input');
     const temperatureRange = document.getElementById('temperature-range');
     const temperatureValue = document.getElementById('temperature-value');
     const enhancedContextTokens = document.getElementById('enhanced-context-tokens');
     const conversationTokens = document.getElementById('conversation-tokens');
-    const topKRange = document.getElementById('top-k');
-    const topKValue = document.getElementById('top-k-value');
-    const topPRange = document.getElementById('top-p');
-    const topPValue = document.getElementById('top-p-value');
     const testModelBtn = document.getElementById('test-model-btn');
 
-    // Load saved settings
-    if (appSettings.modelVersion) {
-        modelSelect.value = appSettings.modelVersion;
-    }
-    if (appSettings.temperature) {
+    if (providerSelect) providerSelect.value = getCurrentProvider();
+    if (modelSelect) modelSelect.value = getGeminiModelName();
+    if (apiKeyInput && state.apiKey) apiKeyInput.value = state.apiKey;
+    if (ollamaBaseUrl) ollamaBaseUrl.value = appSettings.ollamaBaseUrl || DEFAULT_OLLAMA_URL;
+    if (ollamaModelInput) ollamaModelInput.value = appSettings.ollamaModel || "";
+    if (lmStudioBaseUrl) lmStudioBaseUrl.value = appSettings.lmStudioBaseUrl || DEFAULT_LM_STUDIO_URL;
+    if (lmStudioModelInput) lmStudioModelInput.value = appSettings.lmStudioModel || "";
+
+    if (temperatureRange && temperatureValue) {
         temperatureRange.value = appSettings.temperature;
         temperatureValue.textContent = appSettings.temperature;
     }
 
-    // Initialize enhanced context tokens (default: 2000)
-    if (appSettings.enhancedContextTokens) {
-        enhancedContextTokens.value = appSettings.enhancedContextTokens;
-    } else {
-        appSettings.enhancedContextTokens = 2000;
-        enhancedContextTokens.value = 2000;
+    if (enhancedContextTokens) {
+        enhancedContextTokens.value = getTokenLimit(appSettings.enhancedContextTokens, 4096);
     }
 
-    // Initialize conversation tokens (default: 300)
-    if (appSettings.conversationTokens) {
-        conversationTokens.value = appSettings.conversationTokens;
-    } else {
-        appSettings.conversationTokens = 300;
-        conversationTokens.value = 300;
+    if (conversationTokens) {
+        conversationTokens.value = getTokenLimit(appSettings.conversationTokens || appSettings.maxTokens, 4096);
     }
 
-    // For backward compatibility, if maxTokens exists but the new settings don't
-    if (appSettings.maxTokens && (!appSettings.enhancedContextTokens || !appSettings.conversationTokens)) {
-        // Use the old maxTokens value for both new settings if they weren't set
-        if (!appSettings.enhancedContextTokens) {
-            appSettings.enhancedContextTokens = parseInt(appSettings.maxTokens);
-            enhancedContextTokens.value = appSettings.enhancedContextTokens;
-        }
-        if (!appSettings.conversationTokens) {
-            appSettings.conversationTokens = parseInt(appSettings.maxTokens);
-            conversationTokens.value = appSettings.conversationTokens;
-        }
+    updateProviderSettingsVisibility();
+    window.addEventListener('gcrp-local-ai-bridge-ready', updateProviderSettingsVisibility, { once: true });
+
+    if (providerSelect) {
+        providerSelect.addEventListener('change', () => {
+            saveVisibleProviderSettings();
+            markProviderConnectionDirty();
+            updateProviderSettingsVisibility();
+        });
     }
 
-    if (appSettings.topK) {
-        topKRange.value = appSettings.topK;
-        topKValue.textContent = appSettings.topK;
-    }
-    if (appSettings.topP) {
-        topPRange.value = appSettings.topP;
-        topPValue.textContent = appSettings.topP;
+    if (modelSelect) {
+        modelSelect.addEventListener('change', () => {
+            saveVisibleProviderSettings();
+            markProviderConnectionDirty();
+        });
     }
 
-    // Add event listeners
-    modelSelect.addEventListener('change', (e) => {
-        appSettings.modelVersion = e.target.value;
-        saveAppSettings();
+    [ollamaBaseUrl, ollamaModelInput, lmStudioBaseUrl, lmStudioModelInput].forEach(input => {
+        if (!input) return;
+        input.addEventListener('change', () => {
+            saveVisibleProviderSettings();
+            markProviderConnectionDirty();
+        });
     });
 
-    temperatureRange.addEventListener('input', (e) => {
-        appSettings.temperature = parseFloat(e.target.value);
-        temperatureValue.textContent = e.target.value;
-        saveAppSettings();
-    });
+    if (temperatureRange && temperatureValue) {
+        temperatureRange.addEventListener('input', (e) => {
+            appSettings.temperature = parseFloat(e.target.value);
+            temperatureValue.textContent = e.target.value;
+            saveAppSettings({ reinitialize: false });
+        });
+    }
 
-    enhancedContextTokens.addEventListener('change', (e) => {
-        const value = parseInt(e.target.value);
-        // Enforce min/max constraints
-        if (value < 1) e.target.value = 1;
-        if (value > 8192) e.target.value = 8192;
-        appSettings.enhancedContextTokens = parseInt(e.target.value);
-        saveAppSettings();
-    });
+    if (enhancedContextTokens) {
+        enhancedContextTokens.addEventListener('change', (e) => {
+            e.target.value = getTokenLimit(e.target.value, 4096);
+            appSettings.enhancedContextTokens = parseInt(e.target.value, 10);
+            saveAppSettings({ reinitialize: false });
+        });
+    }
 
-    conversationTokens.addEventListener('change', (e) => {
-        const value = parseInt(e.target.value);
-        // Enforce min/max constraints
-        if (value < 1) e.target.value = 1;
-        if (value > 8192) e.target.value = 8192;
-        appSettings.conversationTokens = parseInt(e.target.value);
-        // For backward compatibility, also update maxTokens
-        appSettings.maxTokens = parseInt(e.target.value);
-        saveAppSettings();
-    });
+    if (conversationTokens) {
+        conversationTokens.addEventListener('change', (e) => {
+            e.target.value = getTokenLimit(e.target.value, 4096);
+            appSettings.conversationTokens = parseInt(e.target.value, 10);
+            appSettings.maxTokens = appSettings.conversationTokens;
+            saveAppSettings({ reinitialize: false });
+        });
+    }
 
-    topKRange.addEventListener('input', (e) => {
-        appSettings.topK = parseInt(e.target.value);
-        topKValue.textContent = e.target.value;
-        saveAppSettings();
-    });
-
-    topPRange.addEventListener('input', (e) => {
-        appSettings.topP = parseFloat(e.target.value);
-        topPValue.textContent = e.target.value;
-        saveAppSettings();
-    });
-
-    // Add test configuration button listener
     if (testModelBtn) {
         testModelBtn.addEventListener('click', testModelConfiguration);
     }
@@ -4403,70 +4629,48 @@ async function testModelConfiguration() {
     const testDetails = document.getElementById('test-details');
     const testBtn = document.getElementById('test-model-btn');
 
-    // Show testing state
+    if (!testResult || !testStatus || !testDetails || !testBtn) return;
+
     testResult.classList.remove('hidden', 'bg-green-100', 'bg-red-100');
     testResult.classList.add('bg-blue-100');
     testStatus.textContent = 'Testing configuration...';
-    testDetails.textContent = 'Connecting to Gemini API...';
+    testDetails.textContent = `Connecting to ${getProviderDisplayName()}...`;
     testBtn.disabled = true;
 
     try {
-        // First, check if we have an API key
-        if (!state.apiKey) {
-            throw new Error('No API key set. Please add your API key first.');
+        saveVisibleProviderSettings();
+
+        if (!isProviderConfigured()) {
+            throw new Error(getProviderConfigurationMessage());
         }
 
-        // Log current settings for debugging
-        console.log("Testing with settings:", {
-            model: appSettings.modelVersion,
-            temperature: appSettings.temperature,
-            enhancedContextTokens: appSettings.enhancedContextTokens,
-            conversationTokens: appSettings.conversationTokens,
-            maxTokens: appSettings.maxTokens, // For backward compatibility
-            topK: appSettings.topK,
-            topP: appSettings.topP
-        });
+        const initialized = await initializeAIProvider();
+        if (!initialized) {
+            throw new Error(`${getProviderDisplayName()} could not be initialized.`);
+        }
 
-        // Try to initialize with the selected model using new @google/genai SDK
-        const { GoogleGenAI } = await import("https://esm.run/@google/genai");
-        const ai = new GoogleGenAI({ apiKey: state.apiKey });
-
-        // Test the configuration with current settings
         testDetails.textContent = 'Testing model response...';
+        const response = await callAIText("Respond with 'Configuration test successful' if you receive this message.", 96);
+        const provider = getCurrentProvider();
+        const model = provider === AI_PROVIDERS.GEMINI
+            ? getGeminiModelName()
+            : provider === AI_PROVIDERS.OLLAMA
+                ? appSettings.ollamaModel
+                : await resolveLMStudioModel();
 
-        const result = await ai.models.generateContent({
-            model: appSettings.modelVersion,
-            contents: "Respond with 'Configuration test successful' if you receive this message.",
-            config: {
-                temperature: appSettings.temperature,
-                maxOutputTokens: parseInt(appSettings.conversationTokens || appSettings.maxTokens),
-                topK: appSettings.topK,
-                topP: appSettings.topP,
-            }
-        });
-
-        const response = result.text;
-
-        // Update state with the working client
-        state.genaiClient = ai;
-        state.isApiConnected = true;
-
-        // Show success
         testResult.classList.remove('bg-blue-100');
         testResult.classList.add('bg-green-100');
         testStatus.textContent = 'Configuration test successful!';
         testDetails.innerHTML = `
             <div class="space-y-1">
-                <p>✓ Model: ${appSettings.modelVersion}</p>
-                <p>✓ Temperature: ${appSettings.temperature}</p>
-                <p>✓ Enhanced Context Tokens: ${appSettings.enhancedContextTokens}</p>
-                <p>✓ Conversation Tokens: ${appSettings.conversationTokens}</p>
-                <p>✓ Response received: ${response.substring(0, 50)}...</p>
+                <p>Provider: ${getProviderDisplayName()}</p>
+                <p>Model: ${model}</p>
+                <p>Temperature: ${appSettings.temperature}</p>
+                <p>Conversation Tokens: ${appSettings.conversationTokens}</p>
+                <p>Response received: ${response.substring(0, 80)}...</p>
             </div>
         `;
-
     } catch (error) {
-        // Show error
         testResult.classList.remove('bg-blue-100');
         testResult.classList.add('bg-red-100');
         testStatus.textContent = 'Configuration test failed';
@@ -4476,7 +4680,6 @@ async function testModelConfiguration() {
         testBtn.disabled = false;
     }
 }
-
 // Initialize message delete buttons based on screen size
 function initMessageDeleteButtons() {
     // Check if we're on mobile or desktop
@@ -4583,11 +4786,15 @@ function getLastMessageTimestamp(characterId) {
 
 // Function to regenerate the last AI message
 async function regenerateMessage(characterId) {
+    if (state.isResponseInProgress) {
+        showError("Please wait for the current response to finish before regenerating.");
+        return;
+    }
+
     if (!state.activeChat || state.activeCharacters.length === 0) {
         showError("No active chat or characters selected");
         return;
     }
-
     // Get the messages in the current chat
     const messages = state.chats[state.activeChat] || [];
     if (messages.length === 0) return;
@@ -4638,7 +4845,17 @@ async function regenerateMessage(characterId) {
     }
 
     // Generate a new response
-    await getCharacterResponse(character, lastUserMsg);
+    state.isResponseInProgress = true;
+    updateSendButtonState();
+    updateChatMessages();
+
+    try {
+        await getCharacterResponse(character, lastUserMsg);
+    } finally {
+        state.isResponseInProgress = false;
+        updateSendButtonState();
+        updateChatMessages();
+    }
 }
 
 // After the dismissError function

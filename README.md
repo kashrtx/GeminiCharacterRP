@@ -1,171 +1,103 @@
-# Google Gemini Custom Character RolePlay
+# Gemini Character RP
 
-<div align="center">
-  <img src="https://img.shields.io/badge/status-active-success.svg" alt="Status">
-  <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License">
-</div>
+A browser-based character roleplay app that can use Google Gemini, Ollama, or LM Studio. Characters, chats, provider settings, and API keys are stored in browser localStorage.
 
-## 🌟 [Try it now: Gemini Custom Character RolePlay](https://geminicharacterroleplay.netlify.app/)
+## Features
 
-An interactive web application that allows users to create AI-powered characters and chat with them using Google's Gemini API. Leveraging Gemini's impressive 1 million token context window, this application provides a superior character roleplay experience with responsive interactions and consistent character behavior.
+- Google Gemini provider with current Gemini model choices:
+  - `gemini-3.1-flash-lite`
+  - `gemini-3.5-flash`
+  - `gemini-3.1-pro-preview`
+  - Gemini 2.5 Flash options for fallback
+- Local AI provider support:
+  - Ollama at `http://localhost:11434`
+  - LM Studio OpenAI-compatible server at `http://localhost:1234/v1`
+- Custom local model names for Gemma, Phi, Llama, Qwen, and any other installed model.
+- Single-character chat flow with chat history, regenerate, edit, delete, clear, and new chat actions.
+- Character creation, editing, profile pictures, and AI-assisted character context enhancement.
+- Personal context for better character continuity.
+- Data export/import for backups.
 
-![Character Roleplay Demo](https://github.com/user-attachments/assets/b955fc74-d3bf-4041-bc70-ac8f9cc0bd3b)
+## Running Locally
 
+1. Install dependencies:
 
-## ✨ Features
-
-- **Gemini API Integration**: Utilizes Google's Gemini Pro API for generating high-quality, contextually relevant character responses
-- **Character Creation & Management**:
-  - Create detailed character profiles with names and descriptions
-  - Upload optional profile pictures
-  - AI-powered context enhancement for deeper character lore
-  - Edit characters anytime (note: editing will reset enhanced context)
-- **iMessage-like Chat Interface**: Clean, modern chat UI inspired by Apple's iMessage design
-- **Advanced Chat Features**:
-  - Multi-character conversations
-  - Regenerate AI responses
-  - Edit responses
-  - Create new chats with the same character
-  - Access chat history with any character
-- **Context Management**: Sophisticated system for maintaining character consistency throughout conversations
-- **Customizable Settings**: Fine-tune the AI model parameters to get your preferred style of responses
-- **Data Portability**: Export and import your data to use across different devices
-- **Responsive Design**: Works seamlessly on desktop and most mobile devices (except Safari on mobile)
-
-## 📋 Table of Contents
-
-- [Getting Started](#-getting-started)
-- [How to Use](#-how-to-use)
-  - [Setting Up Your API Key](#setting-up-your-api-key)
-  - [Creating Characters](#creating-characters)
-  - [Chatting with Characters](#chatting-with-characters)
-  - [Message Formatting Tips](#message-formatting-tips)
-  - [Managing Conversations](#managing-conversations)
-  - [Data Management](#data-management)
-- [Contributing](#-contributing)
-- [Browser Compatibility](#-browser-compatibility)
-- [Privacy and Security](#-privacy-and-security)
-- [License](#-license)
-- [Acknowledgements](#-acknowledgements)
-
-## 🚀 Getting Started
-
-### Online Version
-
-The easiest way to use the application is through the hosted version at:
-[https://geminicharacterroleplay.netlify.app/](https://geminicharacterroleplay.netlify.app/)
-
-### Running Locally
-
-#### Prerequisites
-
-- A modern web browser (Chrome, Firefox, Edge, etc.)
-- A Google Gemini API key from [Google AI Studio](https://aistudio.google.com/)
-
-#### Installation
-
-1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/GeminiCharacterRP.git
-   cd GeminiCharacterRP
+   npm install
    ```
-2. Open `index.html` in your web browser
-3. Go to the Settings tab and enter your Google Gemini API key
-4. Start creating characters and chatting!
 
-## 🎮 How to Use
+2. Start the local static server:
 
-### Setting Up Your API Key
+   ```bash
+   npm start
+   ```
 
-1. Obtain a Google Gemini API key from [Google AI Studio](https://aistudio.google.com/)
-2. In the application, click on "Settings" in the navigation bar
-3. Enter your API key in the provided field and click "Save"
-4. Optionally adjust model parameters to fine-tune responses
+3. Open `http://127.0.0.1:3000/` in your browser.
 
-### Creating Characters
+Opening `index.html` directly can work for Gemini, but a localhost server is recommended for Ollama and LM Studio browser requests.
 
-1. Navigate to the "Characters" tab
-2. Enter a name and description for your character
-3. Optionally upload a profile picture
-4. Click "Create Character"
-5. Use "Enhance Context" to have the Gemini API generate a more detailed character profile
+## Provider Setup
 
-### Chatting with Characters
+### Gemini
 
-1. Go to the "Chat" tab
-2. Select one or more characters from the sidebar
-3. Click "Start Chat"
-4. Type your message in the input field and press Enter or click the send button
-5. Watch as your characters respond in real-time!
+1. Get an API key from [Google AI Studio](https://aistudio.google.com/).
+2. Open Settings.
+3. Choose `Google Gemini`.
+4. Paste your key, choose a Gemini model, and click Save or Test Configuration.
 
-### Message Formatting Tips
+The app applies thinking minimization automatically. Gemini 2.5 Flash uses `thinkingBudget: 0`; Gemini 3 thinking models use the lowest supported thinking level for their current API support.
 
-- **Newlines**: Press Enter in the message box for a newline, then use the send button to send the message
-- **Markdown for roleplaying**:
-  - Use `*actions*` for describing physical actions (e.g., *walks into the room*)
-  - Use `__text__` for **bold emphasis**
-  - Use `## Scene` for scene descriptions or transitions
-  - Use `(p.s.)` for out-of-character notes or asides
-- **AI continuation**: Send an empty message to signal the AI to continue roleplaying autonomously until you speak again
-- **Edit message history**: Click on your previous messages to edit them, which updates the AI's memory of what was said before
+### Ollama
 
-### Managing Conversations
+1. Install and start Ollama.
+2. Pull or create a model, for example:
 
-- **Regenerate responses**: If you're not satisfied with a response, click the refresh icon to generate a new one
-- **Edit responses**: Click on any AI response to edit it
-- **Delete a message**: Hover over any message and click the "X" button that appears
-- **Clear the entire chat**: Click the trash icon in the top-right corner of the chat window
-- **Add/remove characters**: Select different characters from the sidebar and click "Update Chat"
-- **Start a new chat**: Click "New Chat" to start a fresh conversation with the same character(s)
-- **View chat history**: Access previous conversations through the history panel
+   ```bash
+   ollama pull gemma3:12b
+   ollama pull phi4
+   ollama pull qwen3:14b
+   ```
 
-### Data Management
+3. Open Settings.
+4. Choose `Ollama (Local)`.
+5. Keep the endpoint as `http://localhost:11434` unless you changed it.
+6. Enter the exact model name and click Test Configuration.
 
-- **Export data**: Go to Settings and use the Export function to save all your characters and chats
-- **Import data**: Use the Import function to restore your data on another device
-- **⚠️ Warning**: Exported data contains your API key. Remove it before sharing with others
+### LM Studio
 
-## 👥 Contributing
+1. Open LM Studio and load a model.
+2. Start the local server in OpenAI-compatible mode.
+3. Open Settings.
+4. Choose `LM Studio (Local)`.
+5. Use `http://localhost:1234/v1` unless your LM Studio server uses a different port.
+6. Enter the loaded model id, or leave `local-model` to use the first model returned by `/v1/models`.
+7. Click Test Configuration.
 
-Contributions are welcome and appreciated! This project was inspired by Character AI but aims to leverage Gemini's capabilities (1M context window and better intelligence) for even better roleplaying experiences.
+## Phone and Netlify Local Models
 
-### How to Contribute
+A Netlify HTTPS page cannot normally call `http://localhost` or private LAN model servers. Phones also cannot use `localhost` for your PC, because `localhost` points to the phone itself.
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Make your changes
-4. Test your changes by running the `index.html` file locally
-5. Commit your changes (`git commit -m 'Add some amazing feature'`)
-6. Push to the branch (`git push origin feature/amazing-feature`)
-7. Open a Pull Request to the `test` branch (not directly to `main`)
+Use `local-ai-bridge.user.js` when you want the deployed Netlify app or a phone browser to call Ollama or LM Studio running on your PC:
 
-All PRs should be directed to the `test` branch for testing before being merged into the `main` branch.
+1. Install Tampermonkey in the browser that opens the app.
+2. Open `https://geminicharacterroleplay.netlify.app/`, then install `https://geminicharacterroleplay.netlify.app/local-ai-bridge.user.js`.
+3. Keep the phone and PC on the same Wi-Fi.
+4. Start Ollama or LM Studio with local-network access enabled on the PC.
+5. Find the PC LAN IPv4 address, for example `192.168.1.25`.
+6. In Settings, use `http://192.168.1.25:11434` for Ollama or `http://192.168.1.25:1234/v1` for LM Studio.
+7. Click Test Configuration before chatting.
 
-## 🌐 Browser Compatibility
+For Ollama LAN access on a trusted private network, configure Ollama to listen on the network interface, for example with `OLLAMA_HOST=0.0.0.0:11434`, then restart Ollama. Keep the firewall limited to trusted devices. For LM Studio, enable local-network serving in its server settings if available.
 
-- Works well on: Chrome, Firefox, Edge, and most modern browsers
-- Known issues: Safari on mobile devices may experience some functionality problems. You need to hide Toolbar for better navigation and scrolling.
-- Tested and optimized for both desktop and mobile interfaces
+## Privacy
 
-## 🔒 Privacy and Security
+- Gemini requests are sent directly from your browser to Google with your API key.
+- Ollama and LM Studio requests are sent to your configured local endpoint.
+- No app backend stores your characters or chats.
+- Exported backups include localStorage data and may include your Gemini API key. Do not share backups without reviewing them first.
 
-This application runs entirely in your browser. Your API key and conversation data are stored locally and are never sent to any server other than Google's API endpoints. The application uses localStorage to save your data between sessions.
+## Notes
 
-When exporting your data, be aware that your API key is included in the export. Always remove your API key before sharing exported data with others.
-
-## 📄 License
-
-This project is open-source and available under the MIT License.
-
-## 🙏 Acknowledgements
-
-- Built with React.js and Tailwind CSS
-- Uses the Google Gemini API for AI text generation
-- Icons provided by Font Awesome
-- Inspired by Character AI but enhanced with Gemini's 1M context window capabilities
-
----
-
-<div align="center">
-  Made with ❤️ by developers for roleplaying enthusiasts
-</div>
+- Group chat selection was removed because it was not complete or reliable.
+- The old top-k/top-p controls were removed because they were provider-specific and could break model calls.
+- Increase the Chat Response Token Limit in Settings if replies are being cut off and your selected model supports longer output.

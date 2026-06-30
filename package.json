@@ -1,7 +1,7 @@
 {
   "name": "gemini-character-rp",
   "version": "1.0.0",
-  "description": "Interactive web application for character roleplay using Google's Gemini API",
+  "description": "Interactive browser character roleplay app with Gemini, Ollama, and LM Studio providers",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

@@ -79,156 +79,159 @@
                         <h2 class="text-2xl font-bold mb-6 text-gray-800">Settings</h2>
 
                         <div class="mb-8">
-                            <h3 class="text-lg font-semibold mb-3 text-gray-700">Google Gemini API Key</h3>
+                            <h3 class="text-lg font-semibold mb-3 text-gray-700">AI Provider</h3>
+                            <label for="provider-select" class="block text-gray-600 mb-2">Provider</label>
+                            <select id="provider-select"
+                                class="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-primary">
+                                <option value="gemini">Google Gemini</option>
+                                <option value="ollama">Ollama (Local)</option>
+                                <option value="lmstudio">LM Studio (Local)</option>
+                            </select>
+                            <p id="provider-help-text" class="text-xs text-gray-500 mt-2"></p>
+                        </div>
+
+                        <div class="mb-8 border-t pt-6" data-provider-settings="gemini">
+                            <h3 class="text-lg font-semibold mb-3 text-gray-700">Google Gemini</h3>
                             <p class="mb-4 text-gray-600">
-                                Your API key is stored locally in your browser and is only sent to Google's servers when
-                                making API calls.
+                                Your Gemini API key is stored locally in your browser and is only sent to Google's API.
                             </p>
-                            <div class="flex">
-                                <input type="password" id="api-key-input" placeholder="Enter your Google Gemini API key"
-                                    class="flex-grow p-2 border rounded-l focus:outline-none focus:ring-2 focus:ring-primary" />
-                                <button onclick="saveApiKey()"
-                                    class="bg-primary text-white px-4 py-2 rounded-r hover:bg-primary/90 transition">
-                                    Save
-                                </button>
+                            <div class="space-y-4">
+                                <div>
+                                    <label for="api-key-input" class="block text-gray-600 mb-2">Gemini API Key</label>
+                                    <div class="flex">
+                                        <input type="password" id="api-key-input"
+                                            placeholder="Enter your Google Gemini API key"
+                                            class="flex-grow p-2 border rounded-l focus:outline-none focus:ring-2 focus:ring-primary" />
+                                        <button onclick="saveApiKey()"
+                                            class="bg-primary text-white px-4 py-2 rounded-r hover:bg-primary/90 transition">
+                                            Save
+                                        </button>
+                                    </div>
+                                    <p id="api-saved" class="text-green-600 mt-2 hidden">
+                                        <i class="fas fa-check-circle mr-1"></i> Provider settings saved
+                                    </p>
+                                    <p class="mt-2 text-sm text-gray-500">
+                                        <i class="fas fa-info-circle mr-1"></i> Get a Gemini API key from <a
+                                            href="https://aistudio.google.com/" target="_blank" rel="noopener noreferrer"
+                                            class="text-primary underline">Google AI Studio</a>
+                                    </p>
+                                </div>
+                                <div>
+                                    <label for="model-select" class="block text-gray-600 mb-2">Gemini Model</label>
+                                    <select id="model-select"
+                                        class="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-primary">
+                                        <option value="gemini-3.1-flash-lite" selected>Gemini 3.1 Flash-Lite</option>
+                                        <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
+                                        <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview</option>
+                                        <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash-Lite</option>
+                                        <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                                    </select>
+                                    <p class="text-xs text-gray-500 mt-1">Thinking is minimized automatically for Gemini thinking models; Gemini 3.1 Pro uses the lowest supported level because the API does not expose full off for Pro.</p>
+                                </div>
                             </div>
-                            <p id="api-saved" class="text-green-600 mt-2 hidden">
-                                <i class="fas fa-check-circle mr-1"></i> API key saved successfully
+                        </div>
+
+                        <div class="mb-8 border-t pt-6 hidden" data-provider-settings="ollama">
+                            <h3 class="text-lg font-semibold mb-3 text-gray-700">Ollama</h3>
+                            <p class="mb-4 text-gray-600">
+                                Use a local Ollama model for private chats. Start Ollama first, then enter any installed model name.
                             </p>
-                            <p class="mt-2 text-sm text-gray-500">
-                                <i class="fas fa-info-circle mr-1"></i> Get your Gemini API key from <a
-                                    href="https://aistudio.google.com/" target="_blank" rel="noopener noreferrer"
-                                    class="text-primary underline">Google AI Studio</a>
+                            <div class="space-y-4">
+                                <div>
+                                    <label for="ollama-base-url" class="block text-gray-600 mb-2">Ollama Endpoint</label>
+                                    <input type="url" id="ollama-base-url" value="http://localhost:11434"
+                                        class="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-primary" />
+                                </div>
+                                <div>
+                                    <label for="ollama-model-input" class="block text-gray-600 mb-2">Ollama Model</label>
+                                    <input type="text" id="ollama-model-input" list="ollama-model-presets"
+                                        placeholder="gemma3:12b, phi4, llama4, qwen3:14b..."
+                                        class="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-primary" />
+                                    <datalist id="ollama-model-presets">
+                                        <option value="gemma3:12b"></option>
+                                        <option value="phi4"></option>
+                                        <option value="llama4"></option>
+                                        <option value="qwen3:14b"></option>
+                                        <option value="qwen3:8b"></option>
+                                    </datalist>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mb-8 border-t pt-6 hidden" data-provider-settings="lmstudio">
+                            <h3 class="text-lg font-semibold mb-3 text-gray-700">LM Studio</h3>
+                            <p class="mb-4 text-gray-600">
+                                Use LM Studio's local OpenAI-compatible server. Load a model in LM Studio before testing.
+                            </p>
+                            <div class="space-y-4">
+                                <div>
+                                    <label for="lmstudio-base-url" class="block text-gray-600 mb-2">LM Studio Endpoint</label>
+                                    <input type="url" id="lmstudio-base-url" value="http://localhost:1234/v1"
+                                        class="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-primary" />
+                                </div>
+                                <div>
+                                    <label for="lmstudio-model-input" class="block text-gray-600 mb-2">LM Studio Model</label>
+                                    <input type="text" id="lmstudio-model-input" placeholder="local-model or loaded model id"
+                                        class="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-primary" />
+                                    <p class="text-xs text-gray-500 mt-1">Leave as local-model to let the app use the first model returned by /v1/models.</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mb-8 border-t pt-6" id="local-ai-bridge-settings">
+                            <h3 class="text-lg font-semibold mb-3 text-gray-700">Phone & Netlify Local AI</h3>
+                            <p class="mb-4 text-gray-600">
+                                Desktop browsers can use localhost directly. Phones and the Netlify HTTPS app need a bridge so the browser can reach Ollama or LM Studio on your PC.
+                            </p>
+                            <ol class="list-decimal pl-5 space-y-2 text-sm text-gray-600">
+                                <li>Install Tampermonkey in the browser that opens this app.</li>
+                                <li><a href="local-ai-bridge.user.js" target="_blank" rel="noopener noreferrer" class="text-primary underline">Install the Local AI Bridge userscript</a>.</li>
+                                <li>Keep your phone and PC on the same Wi-Fi.</li>
+                                <li>Start Ollama or LM Studio with local-network access enabled on the PC.</li>
+                                <li>Use your PC LAN IP endpoint, such as <code class="bg-gray-100 px-1 rounded">http://192.168.1.25:11434</code> for Ollama or <code class="bg-gray-100 px-1 rounded">http://192.168.1.25:1234/v1</code> for LM Studio.</li>
+                                <li>Click Test Configuration before chatting.</li>
+                            </ol>
+                            <p id="local-bridge-status" class="mt-3 text-xs text-gray-500">
+                                Bridge status: not detected in this browser yet.
                             </p>
                         </div>
 
                         <div class="mb-8 border-t pt-6">
-                            <h3 class="text-lg font-semibold mb-3 text-gray-700">Model Settings</h3>
+                            <h3 class="text-lg font-semibold mb-3 text-gray-700">Generation Settings</h3>
                             <div class="space-y-4">
                                 <div>
-                                    <label for="model-select" class="block text-gray-600 mb-2">
-                                        Model Version
-                                    </label>
-                                    <select id="model-select"
-                                        class="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-primary">
-                                        <option value="gemini-2.5-flash-lite" selected>Gemini 2.5 Flash-Lite ⭐
-                                            Recommended</option>
-                                        <option value="gemini-2.5-flash">Gemini 2.5 Flash - Stable Balanced</option>
-                                        <option value="gemini-3-flash-preview">Gemini 3 Flash (Preview) - Fast</option>
-                                        <option value="gemini-3-pro-preview">Gemini 3 Pro (Preview) - Best Reasoning ⚠️
-                                            Quota Limits</option>
-                                    </select>
-                                    <p class="text-xs text-gray-500 mt-1">⭐ Flash-Lite gives best responses. Preview
-                                        models have stricter quota limits.</p>
-                                </div>
-
-                                <div>
                                     <label for="temperature-range" class="block text-gray-600 mb-2">
-                                        Temperature (Creativity): <span id="temperature-value">0.7</span>
+                                        Temperature: <span id="temperature-value">1.0</span>
                                     </label>
-                                    <input type="range" id="temperature-range" min="0" max="2" step="0.1" value="0.7"
+                                    <input type="range" id="temperature-range" min="0" max="2" step="0.1" value="1.0"
                                         class="w-full accent-primary">
                                     <div class="flex justify-between text-sm text-gray-500">
-                                        <span>Focused (0)</span>
-                                        <span>Balanced (1)</span>
-                                        <span>Creative (2)</span>
+                                        <span>Focused</span>
+                                        <span>Balanced</span>
+                                        <span>Creative</span>
                                     </div>
                                 </div>
 
                                 <div>
                                     <label for="enhanced-context-tokens" class="block text-gray-600 mb-2">
-                                        Enhanced Character Context Token Length
+                                        Character Enhancement Token Limit
                                     </label>
                                     <input type="number" id="enhanced-context-tokens"
                                         class="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-primary"
-                                        min="1" max="8192" value="2000">
-                                    <p class="text-xs text-gray-500 mt-1">Controls token length for character context
-                                        enhancement (1-8192)</p>
+                                        min="1" max="65536" value="4096">
                                 </div>
 
                                 <div>
                                     <label for="conversation-tokens" class="block text-gray-600 mb-2">
-                                        AI Conversation Message Token Length
+                                        Chat Response Token Limit
                                     </label>
                                     <input type="number" id="conversation-tokens"
                                         class="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-primary"
-                                        min="1" max="8192" value="300">
-                                    <p class="text-xs text-gray-500 mt-1">Controls token length for AI responses in chat
-                                        (1-8192)</p>
-                                </div>
-
-                                <div>
-                                    <label for="top-k" class="block text-gray-600 mb-2">
-                                        Top-K: <span id="top-k-value">1</span>
-                                        <span class="text-xs text-gray-500 ml-1">(Controls token selection
-                                            diversity)</span>
-                                    </label>
-                                    <input type="range" id="top-k" min="1" max="40" step="1" value="1"
-                                        class="w-full accent-primary">
-                                    <div class="flex justify-between text-sm text-gray-500">
-                                        <span>Focused (1)</span>
-                                        <span>Balanced (20)</span>
-                                        <span>Diverse (40)</span>
-                                    </div>
-                                </div>
-
-                                <div>
-                                    <label for="top-p" class="block text-gray-600 mb-2">
-                                        Top-P: <span id="top-p-value">0.90</span>
-                                        <span class="text-xs text-gray-500 ml-1">(Controls response
-                                            predictability)</span>
-                                    </label>
-                                    <input type="range" id="top-p" min="0.1" max="1" step="0.05" value="0.90"
-                                        class="w-full accent-primary">
-                                    <div class="flex justify-between text-sm text-gray-500">
-                                        <span>Focused (0.1)</span>
-                                        <span>Balanced (0.5)</span>
-                                        <span>Creative (1.0)</span>
-                                    </div>
+                                        min="1" max="65536" value="4096">
+                                    <p class="text-xs text-gray-500 mt-1">Higher limits reduce cutoffs when the selected model supports longer output.</p>
                                 </div>
                             </div>
 
-                            <!-- Personal Context Settings -->
-                            <div class="mb-8 border-t pt-6">
-                                <h3 class="text-lg font-semibold mb-3 text-gray-700">Personal Context</h3>
-                                <p class="mb-4 text-gray-600">
-                                    Add information about yourself to help the AI better understand and interact with
-                                    you.
-                                </p>
-                                <div class="space-y-4">
-                                    <div>
-                                        <label for="user-name" class="block text-gray-600 mb-2">
-                                            Your Name
-                                        </label>
-                                        <input type="text" id="user-name" placeholder="Enter your name"
-                                            class="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-primary" />
-                                    </div>
-                                    <div>
-                                        <label for="user-personality" class="block text-gray-600 mb-2">
-                                            Your Personality
-                                        </label>
-                                        <textarea id="user-personality"
-                                            placeholder="Describe your personality traits, interests, and communication style..."
-                                            rows="3"
-                                            class="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-primary resize-none"></textarea>
-                                    </div>
-                                    <div>
-                                        <label for="user-context" class="block text-gray-600 mb-2">
-                                            Additional Context
-                                        </label>
-                                        <textarea id="user-context"
-                                            placeholder="Add any other relevant information about yourself, preferences, or background..."
-                                            rows="4"
-                                            class="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-primary resize-none"></textarea>
-                                    </div>
-                                    <button onclick="savePersonalContext()"
-                                        class="bg-primary text-white px-4 py-2 rounded hover:bg-primary/90 transition">
-                                        Save Personal Context
-                                    </button>
-                                </div>
-                            </div>
-
-                            <!-- Add Test Configuration Button -->
                             <div class="mt-6 border-t pt-4">
                                 <button id="test-model-btn"
                                     class="w-full bg-accent text-white px-4 py-2 rounded hover:bg-accent/90 transition flex items-center justify-center gap-2">
@@ -248,27 +251,42 @@
                         </div>
 
                         <div class="mb-8 border-t pt-6">
-                            <h3 class="text-lg font-semibold mb-3 text-gray-700">Chat Settings</h3>
-                            <div class="flex items-center mb-4">
-                                <input type="checkbox" id="allow-group-chats" class="mr-2 h-5 w-5 accent-primary"
-                                    onclick="toggleGroupChats(this.checked)">
-                                <label for="allow-group-chats" class="text-gray-600">
-                                    Allow multiple character selection (Group chats) (Not implemented yet)
-                                </label>
-                            </div>
-                            <p class="text-sm text-gray-500 mb-4">
-                                <i class="fas fa-info-circle mr-1"></i> When disabled, only one character can be
-                                selected at a time for chat.
+                            <h3 class="text-lg font-semibold mb-3 text-gray-700">Personal Context</h3>
+                            <p class="mb-4 text-gray-600">
+                                Add information about yourself to help the AI better understand and interact with you.
                             </p>
+                            <div class="space-y-4">
+                                <div>
+                                    <label for="user-name" class="block text-gray-600 mb-2">Your Name</label>
+                                    <input type="text" id="user-name" placeholder="Enter your name"
+                                        class="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-primary" />
+                                </div>
+                                <div>
+                                    <label for="user-personality" class="block text-gray-600 mb-2">Your Personality</label>
+                                    <textarea id="user-personality"
+                                        placeholder="Describe your personality traits, interests, and communication style..."
+                                        rows="3"
+                                        class="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-primary resize-none"></textarea>
+                                </div>
+                                <div>
+                                    <label for="user-context" class="block text-gray-600 mb-2">Additional Context</label>
+                                    <textarea id="user-context"
+                                        placeholder="Add any other relevant information about yourself, preferences, or background..."
+                                        rows="4"
+                                        class="w-full p-2 border rounded focus:outline-none focus:ring-2 focus:ring-primary resize-none"></textarea>
+                                </div>
+                                <button onclick="savePersonalContext()"
+                                    class="bg-primary text-white px-4 py-2 rounded hover:bg-primary/90 transition">
+                                    Save Personal Context
+                                </button>
+                            </div>
                         </div>
 
                         <div class="border-t pt-6">
                             <h3 class="text-lg font-semibold mb-3 text-gray-700">About</h3>
                             <p class="text-gray-600">
-                                This application uses the Google Gemini API to power character interactions.
-                                All data is stored locally in your browser. No information is sent to any server
-                                other than directly to Google's API. Uses Gemini Flash for quick and witted
-                                responses!
+                                This application runs in your browser and can use Google Gemini, Ollama, or LM Studio.
+                                Character data and provider settings are stored locally in this browser.
                             </p>
                         </div>
 
@@ -417,7 +435,7 @@
                     </button>
                     <div class="text-center">
                         <i class="fas fa-comments text-5xl text-gray-300 mb-4"></i>
-                        <p class="text-gray-500">Select one or more characters to start chatting</p>
+                        <p class="text-gray-500">Select a character to start chatting</p>
                     </div>
                 </div>
 
@@ -467,7 +485,7 @@
                     </div>
 
                     <!-- Message input -->
-                    <div class="p-4 bg-white border-t">
+                    <div id="chat-input-container" class="p-4 bg-white border-t chat-input-container">
                         <form id="chat-form" class="flex space-x-2">
                             <textarea id="message-input" placeholder="Type your message... (Enter for new line)"
                                 class="flex-grow p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary resize-y overflow-y-auto min-h-[40px] max-h-[200px]"

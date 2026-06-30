@@ -1041,7 +1041,7 @@ header nav button {
 }
 
 /* Message input area styling */
-.p-4.bg-white.border-t {
+#chat-input-container {
     padding: 12px !important;
 }
 
@@ -1160,9 +1160,8 @@ button[id^="delete-msg-"] {
 @media (max-width: 768px) {
     /* --- CONSOLIDATED CHAT INPUT AREA STYLES --- */
     /* Universal input container positioning for all mobile browsers */
-    #chat-window > div:last-of-type,
-    .chat-input-container,
-    .p-4.bg-white.border-t {
+    #chat-input-container,
+    .chat-input-container {
         position: fixed !important;
         bottom: 0 !important;
         left: 0 !important;
@@ -1185,8 +1184,7 @@ button[id^="delete-msg-"] {
     }
     
     /* Class to be added when keyboard is visible - works in all browsers */
-    body.keyboard-visible .p-4.bg-white.border-t,
-    body.keyboard-visible #chat-window > div:last-of-type,
+    body.keyboard-visible #chat-input-container,
     body.keyboard-visible .chat-input-container {
         position: absolute; /* Change to absolute when keyboard visible */
         bottom: 0;
@@ -1235,22 +1233,20 @@ button[id^="delete-msg-"] {
 }
 
 /* Message input container */
-.p-4.bg-white.border-t {
+#chat-input-container {
     padding: 0.75rem;
 }
 
 @media (max-width: 768px) {
     /* Class to be added when keyboard is visible - works in all browsers */
-    body.keyboard-visible .p-4.bg-white.border-t,
-    body.keyboard-visible #chat-window > div:last-of-type,
+    body.keyboard-visible #chat-input-container,
     body.keyboard-visible .chat-input-container {
         position: absolute; /* Change to absolute when keyboard visible */
         bottom: 0;
     }
     
     /* When the sidemenu is open, ensure the message container stays on top */
-    #character-sidebar.sidebar-open + #chat-window .p-4.bg-white.border-t,
-    #character-sidebar.sidebar-open + #chat-window #chat-window > div:last-of-type,
+    #character-sidebar.sidebar-open + #chat-window #chat-input-container,
     #character-sidebar.sidebar-open + #chat-window .chat-input-container {
         z-index: 60;
     }
@@ -1539,3 +1535,47 @@ button[id^="delete-msg-"] {
     }
 }
 /* --- End Mobile Button Layout --- */
+
+/* Visible response status while the model is preparing or thinking */
+.typing-indicator-bubble {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    min-height: 2.75rem;
+    max-width: min(26rem, 85vw);
+    padding: 0.7rem 1rem;
+}
+
+.typing-status-text {
+    min-width: 0;
+    color: #4b5563;
+    font-size: 0.875rem;
+    line-height: 1.35;
+    white-space: normal;
+}
+
+.typing-indicator-bubble .typing-indicator {
+    flex-shrink: 0;
+    width: auto;
+    max-width: none;
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    border-radius: 0;
+}
+
+@media (max-width: 768px) {
+    .typing-indicator-bubble {
+        max-width: calc(100vw - 5rem);
+        align-items: flex-start;
+        gap: 0.5rem;
+    }
+
+    .typing-status-text {
+        font-size: 0.8rem;
+    }
+
+    #chat-input-container {
+        min-height: calc(64px + env(safe-area-inset-bottom, 0px));
+    }
+}
