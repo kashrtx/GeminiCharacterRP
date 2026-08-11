@@ -1,6 +1,6 @@
 # Gemini Character RP
 
-> DEPRECATED — This project has been deprecated in favor of a new project called **Cast**, which provides broader model support, group chats, and several UI improvements. Cast is a fresh rewrite started to avoid breaking the original program when adding major changes. This repository remains available for reference and archival purposes.
+> DEPRECATED — This project has been deprecated in favor of a new project called **[Cast](https://github.com/kashrtx/Cast)**, which provides broader model support, group chats, and several UI improvements. Cast is a fresh rewrite started to avoid breaking the original program when adding major changes. This repository remains available for reference and archival purposes.
 
 A browser-based character roleplay app that can use Google Gemini, Ollama, or LM Studio. Characters, chats, provider settings, and API keys are stored in browser localStorage.
 
