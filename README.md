@@ -1,5 +1,7 @@
 # Gemini Character RP
 
+> DEPRECATED — This project has been deprecated in favor of a new project called **Cast**, which provides broader model support, group chats, and several UI improvements. Cast is a fresh rewrite started to avoid breaking the original program when adding major changes. This repository remains available for reference and archival purposes.
+
 A browser-based character roleplay app that can use Google Gemini, Ollama, or LM Studio. Characters, chats, provider settings, and API keys are stored in browser localStorage.
 
 ## Features
@@ -87,7 +89,7 @@ Use `local-ai-bridge.user.js` when you want the deployed Netlify app or a phone 
 6. In Settings, use `http://192.168.1.25:11434` for Ollama or `http://192.168.1.25:1234/v1` for LM Studio.
 7. Click Test Configuration before chatting.
 
-For Ollama LAN access on a trusted private network, configure Ollama to listen on the network interface, for example with `OLLAMA_HOST=0.0.0.0:11434`, then restart Ollama. Keep the firewall limited to trusted devices. For LM Studio, enable local-network serving in its server settings if available.
+For Ollama LAN access on a trusted private network, configure Ollama to listen on the network interface, for example with `OLLAMA_HOST=0.0.0.0:11434`, then restart Ollama. Keep the firewall limited.
 
 ## Privacy
 
